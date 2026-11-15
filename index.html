@@ -588,9 +588,12 @@ function draw(){
   const X=lo=>(lo-AREA.lon0)/(AREA.lon1-AREA.lon0)*W,Y=la=>(AREA.lat1-la)/(AREA.lat1-AREA.lat0)*H,cw=W/NX,ch=H/NY;
   const defs=layerDefs(A);let li=defs[MAP.layer];if(!li){MAP.layer="score";li=defs.score;}
   const off=document.createElement("canvas");off.width=NX;off.height=NY;const oc=off.getContext("2d"),img=oc.createImageData(NX,NY);
-  for(let n=0;n<NN;n++){const v=li.f[n];let c;if(A.land[n])c=[52,58,52];else if(isNaN(v))c=[10,24,40];else c=li.col(v);img.data.set([c[0],c[1],c[2],255],n*4);}
+  for(let n=0;n<NN;n++){const v=li.f[n];let c;if(isNaN(v))c=A.land[n]&&!(MAP.BF&&!A.sample)?[52,58,52]:[10,24,40];else c=li.col(v);img.data.set([c[0],c[1],c[2],255],n*4);}
   oc.putImageData(img,0,0);g.imageSmoothingEnabled=true;g.drawImage(off,-cw/2,-ch/2,W+cw,H+ch);
-  g.fillStyle="#343a34";for(let n=0;n<NN;n++)if(A.land[n]){const i=n%NX,j=(n-i)/NX;g.fillRect(X(lonOf(i))-cw/2,Y(latOf(j))-ch/2,cw+.6,ch+.6);}
+  if(MAP.BF&&!A.sample){const B=MAP.BF;if(!MAP.landImg){const c=document.createElement("canvas");c.width=B.nx;c.height=B.ny;const cx=c.getContext("2d"),im=cx.createImageData(B.nx,B.ny);
+      for(let k=0;k<B.nx*B.ny;k++)if(isNaN(B.depth[k]))im.data.set([52,58,52,255],k*4);cx.putImageData(im,0,0);MAP.landImg=c;}
+    const x0=X(B.lon0-B.res/2),y0=Y(B.lat1+B.res/2),x1=X(B.lon0+(B.nx-.5)*B.res),y1=Y(B.lat1-(B.ny-.5)*B.res);g.imageSmoothingEnabled=true;g.drawImage(MAP.landImg,x0,y0,x1-x0,y1-y0);}
+  else{g.fillStyle="#343a34";for(let n=0;n<NN;n++)if(A.land[n]){const i=n%NX,j=(n-i)/NX;g.fillRect(X(lonOf(i))-cw/2,Y(latOf(j))-ch/2,cw+.6,ch+.6);}}
   const segs=(f,lv,style,w,dash)=>{const s=contours(f,lv);g.strokeStyle=style;g.lineWidth=w;g.setLineDash(dash||[]);g.beginPath();
     for(let k=0;k<s.length;k+=2){g.moveTo(X(lonOf(s[k][0])),Y(latOf(s[k][1])));g.lineTo(X(lonOf(s[k+1][0])),Y(latOf(s[k+1][1])));}g.stroke();g.setLineDash([]);};
   const placed=[];g.font="9px sans-serif";
@@ -600,8 +603,8 @@ function draw(){
       if(placed.some(([px,py])=>Math.hypot(px-x,py-y)<70))continue;placed.push([x,y]);n++;
       g.lineWidth=3;g.strokeStyle="rgba(4,20,40,.85)";g.strokeText(c.lv,x-8,y+3);g.fillStyle="#fff";g.fillText(c.lv,x-8,y+3);}}}
   if(MAP.showEddies&&A.slaL){segs(A.slaL,0.08,"rgba(255,90,70,.95)",1.8,[6,3]);segs(A.slaL,-0.08,"rgba(90,160,255,.95)",1.8,[6,3]);}
-  if(MAP.showFronts){const e=A.cc[Math.min(MAP.day,A.cc.length-1)];g.fillStyle="rgba(0,0,0,.75)";
-    for(let n=0;n<NN;n++)if(e[n]){const i=n%NX,j=(n-i)/NX;g.fillRect(X(lonOf(i))-cw*.5,Y(latOf(j))-ch*.5,cw,ch);}
+  if(MAP.showFronts){const e=A.cc[Math.min(MAP.day,A.cc.length-1)];g.fillStyle="rgba(0,0,0,.6)";
+    for(let n=0;n<NN;n++)if(e[n]&&!A.land[n]){const i=n%NX,j=(n-i)/NX;g.beginPath();g.arc(X(lonOf(i)),Y(latOf(j)),Math.max(.9,cw*.35),0,7);g.fill();}
     if(A.chlEdge&&MAP.layer==="chl"){g.fillStyle="rgba(255,255,255,.8)";for(let n=0;n<NN;n++)if(A.chlEdge[n]){const i=n%NX,j=(n-i)/NX;g.fillRect(X(lonOf(i))-cw*.4,Y(latOf(j))-ch*.4,cw*.8,ch*.8);}}}
   g.strokeStyle="rgba(255,255,255,.12)";g.lineWidth=1;g.fillStyle="rgba(220,235,250,.75)";g.font="10px sans-serif";
   for(let lo=175.5;lo<=178;lo+=.5){g.beginPath();g.moveTo(X(lo),0);g.lineTo(X(lo),H);g.stroke();g.fillText(lo.toFixed(1)+"°E",X(lo)+2,H-4);}
