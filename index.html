@@ -104,6 +104,7 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
 .mtog button.on{background:var(--accent);color:#04201b;border-color:var(--accent);font-weight:600}
 .bw{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:13.5px}
 .bw .k{font-weight:700}.prime{font-size:11px;background:rgba(255,181,71,.2);color:var(--warm);border-radius:6px;padding:1px 6px;margin-left:6px}
+.bite{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px;margin-top:4px}.bite span{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:1px}.bite b{font-size:16px;color:var(--accent)}
 .next{font-size:12px;color:var(--muted);margin-top:6px}
 </style>
 </head>
@@ -809,12 +810,17 @@ function renderMoon(){
   const rows=ev.filter(e=>e.type!=="Sun").map(e=>{const a=e.t-e.dur*30e3,b=e.t+e.dur*30e3,prime=suns.some(s=>s>a-36e5&&s<b+36e5);
     return`<div class="bw"><span><span class="k" style="color:${e.type==="Major"?"var(--accent)":"var(--warm)"}">${e.type}</span> · ${e.label}${prime?'<span class="prime">Prime: overlaps sunrise/sunset</span>':""}</span><span>${nzTime(a)} to ${nzTime(b)}</span></div>`;}).join("");
   const sr=ev.find(e=>e.label==="Sunrise"),ss=ev.find(e=>e.label==="Sunset");
+  const hm=t=>{const s_=nzTime(t).replace(/\s/g,"").toLowerCase();return{t:s_.replace(/(am|pm)$/,""),ap:s_.slice(-2)};};
+  const rng=(a,b)=>{const x=hm(a),y=hm(b);return x.ap===y.ap?`${x.t}-${y.t}${y.ap}`:`${x.t}${x.ap}-${y.t}${y.ap}`;};
+  const dayFrom=sr?sr.t-36e5:day0,dayTo=ss?ss.t+36e5:day0+864e5;
+  const bite=ev.filter(e=>e.type!=="Sun"&&e.t+e.dur*30e3>dayFrom&&e.t-e.dur*30e3<dayTo).map(e=>rng(e.t-e.dur*30e3,e.t+e.dur*30e3));
   const nn=nextPhase(0),nf=nextPhase(.5);
   $("moonpanel").innerHTML=`<div class="moonhead">${moonSVG(p)}<div><div class="ph">${name}<span class="rate ${cls}">${rate}</span></div><div class="il">${ill}% lit · moon age ${age.toFixed(1)} days · ${nzDate(day0+43200e3)}</div></div>
     <div class="mtog"><button data-d="0" class="${moonDay===0?"on":""}">Today</button><button data-d="1" class="${moonDay===1?"on":""}">Tomorrow</button></div></div>
     <p>${msg}</p>
     <p class="exp"><b style="color:var(--accent)">Major periods</b> (about 2 hours) are when the moon is directly overhead or underfoot, its strongest pull. <b style="color:var(--warm)">Minor periods</b> (about 1 hour) are moonrise and moonset. Either one lining up with sunrise or sunset is the best window of the day.</p>
     ${rows||'<div class="bw">No solunar periods this day</div>'}
+    <div class="bite"><span>Bite times</span><b>${bite.length?(bite.length>1?bite.slice(0,-1).join(", ")+" and "+bite[bite.length-1]:bite[0]):"None in daylight"}</b></div>
     <div class="next">Sunrise ${sr?nzTime(sr.t):"n/a"} · Sunset ${ss?nzTime(ss.t):"n/a"} · Next new moon ${nn?nzDate(nn):"n/a"} · Next full moon ${nf?nzDate(nf):"n/a"} · Times for the Bay of Plenty (NZ time)</div>`;
   $("moonpanel").querySelectorAll(".mtog button").forEach(b=>b.onclick=()=>{moonDay=+b.dataset.d;renderMoon();});}
 renderMoon();
