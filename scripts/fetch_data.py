@@ -8,7 +8,8 @@ and writes small JSON files to data/ that the app reads.
 Each source is optional: if one fails, the others still update and the app
 falls back to its live NOAA feeds.
 """
-import json, os, sys, socket, time, datetime as dt
+import json, os, sys, socket, time, warnings, datetime as dt
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 socket.setdefaulttimeout(60)
 T0 = time.time()
 def log(*a):
@@ -160,7 +161,7 @@ def moana():
     print("moana: wrote", list(layers))
 
 
-ERD = "https://coastwatch.pfeg.noaa.gov/erddap/griddap/"
+ERDS = ["https://coastwatch.pfeg.noaa.gov/erddap/griddap/", "https://upwell.pfeg.noaa.gov/erddap/griddap/", "https://coastwatch.noaa.gov/erddap/griddap/"]
 
 
 def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
@@ -168,13 +169,21 @@ def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
     import requests, io, csv
     la0, la1, lo0, lo1 = BOX["lat0"] - pad, BOX["lat1"] + pad, BOX["lon0"] - pad, BOX["lon1"] + pad
     last = None
-    for latc in (f"[({la0:.3f}):{stride}:({la1:.3f})]", f"[({la1:.3f}):{stride}:({la0:.3f})]"):
-        q = var + time + ("[(0.0)]" if alt else "") + latc + f"[({lo0:.3f}):{stride}:({lo1:.3f})]"
-        try:
-            r = requests.get(ERD + ds + ".csv?" + requests.utils.quote(q, safe=""), timeout=300)
-            r.raise_for_status(); break
-        except Exception as e:
-            last = e; r = None
+    r = None
+    for erd in ERDS:
+        for latc in (f"[({la0:.3f}):{stride}:({la1:.3f})]", f"[({la1:.3f}):{stride}:({la0:.3f})]"):
+            q = var + time + ("[(0.0)]" if alt else "") + latc + f"[({lo0:.3f}):{stride}:({lo1:.3f})]"
+            try:
+                r = requests.get(erd + ds + ".csv?" + requests.utils.quote(q, safe=""), timeout=300)
+                r.raise_for_status(); break
+            except Exception as e:
+                last = e; r = None
+                if "403" in str(e) or "503" in str(e) or "timed out" in str(e):
+                    break          # server refusing us: try the next mirror
+        if r is not None:
+            if erd != ERDS[0]:
+                log("  (from mirror", erd.split("/")[2] + ")")
+            break
     if r is None:
         raise last
     rows = list(csv.reader(io.StringIO(r.text)))
@@ -522,16 +531,28 @@ RESERVE_SOURCES = [
     ("Marine reserve", "https://services1.arcgis.com/3JjYDyG3oajxU6HO/arcgis/rest/services/DOC_Marine_Reserves/FeatureServer/0/query",
      {"where": "1=1", "geometry": f"{BOX['lon0']},{BOX['lat0']},{BOX['lon1']},{BOX['lat1']}", "geometryType": "esriGeometryEnvelope", "inSR": 4326,
       "spatialRel": "esriSpatialRelIntersects", "outFields": "*", "outSR": 4326, "f": "geojson"}),
+    ("High protection area", "item:4b0a74880f554ce1a8e1fa46a3bbd3ce", None),
     ("High protection area", "https://doc-deptconservation.opendata.arcgis.com/api/download/v1/items/4b0a74880f554ce1a8e1fa46a3bbd3ce/geojson", {"layers": 0}),
 ]
+BOX_QUERY = {"where": "1=1", "geometry": f"{BOX['lon0']},{BOX['lat0']},{BOX['lon1']},{BOX['lat1']}", "geometryType": "esriGeometryEnvelope", "inSR": 4326,
+             "spatialRel": "esriSpatialRelIntersects", "outFields": "*", "outSR": 4326, "f": "geojson"}
 
 
 def reserves():
     import requests
     items = []
+    have_hpa = False
     for kind, url, params in RESERVE_SOURCES:
+        if kind == "High protection area" and have_hpa:
+            continue
         try:
+            if url.startswith("item:"):
+                meta = requests.get(f"https://www.arcgis.com/sharing/rest/content/items/{url[5:]}", params={"f": "json"}, timeout=60).json()
+                url, params = meta["url"].rstrip("/") + ("/0" if not meta["url"].rstrip("/")[-1].isdigit() else "") + "/query", BOX_QUERY
+                log("reserves: HPA feature service", url)
             g = requests.get(url, params=params, timeout=120).json()
+            if kind == "High protection area" and g.get("features"):
+                have_hpa = True
         except Exception as e:
             log("reserves:", kind, "failed", str(e)[:100]); continue
         for ft in g.get("features", []):
