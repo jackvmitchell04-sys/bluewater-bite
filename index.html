@@ -643,28 +643,31 @@ async function loadMap(){
   st.innerHTML='<span class="spin"></span>Downloading 1 km satellite SST for the last 6 days...';
   let D;
   try{
-    const sstP=erddap("jplMURSST41","analysed_sst",{time:"[last-5:1:last]",stride:2,pad:.02});
-    const bathP=firstOf([{ds:"GEBCO_2020",v:"elevation",o:{stride:3,pad:.02},label:"GEBCO 2020, 15 arc-second (~450 m)"},{ds:"GEBCO_2020",v:"altitude",o:{stride:3,pad:.02},label:"GEBCO 2020, 15 arc-second (~450 m)"},{ds:"etopo180",v:"altitude",o:{stride:1,pad:.02},label:"NOAA ETOPO1, 1 arc-minute (fallback)"}]).catch(()=>null);
-    const chlP=erddap("nesdisVHNnoaaSNPPnoaa20chlaGapfilledDaily","chlor_a",{time:"[last-5:1:last]",alt:true,stride:1,pad:.1}).catch(()=>null);
-    const kdP=firstOf([{ds:"nesdisNPPN20S3AkdSCIDINEOFDaily",v:"kd_490",o:{time:"[last]",alt:true,pad:.1}},{ds:"nesdisNPPN20S3AkdSCIDINEOFDaily",v:"kd490",o:{time:"[last]",alt:true,pad:.1}},{ds:"nesdisNPPN20S3AkdSCIDINEOFDaily",v:"kd_490",o:{time:"[last]",pad:.1}}]).catch(()=>null);
-    const sshP=erddap("nesdisSSH1day","sla",{time:"[last-5:1:last]",pad:.5}).catch(()=>null);
-    const curP=loadOpenMeteoCurrents().catch(()=>null);
-    const sp=await sstP;const S=toGrids(sp,"analysed_sst");const times=S.times.map(t=>t.slice(0,10));
-    src.push({ok:1,name:"Sea surface temperature",detail:`NASA JPL MUR, 1 km daily, ${times[0]} to ${times[times.length-1]}`});
-    st.innerHTML='<span class="spin"></span>Adding depth, chlorophyll, clarity, sea height and currents...';
-    const climP=erddap("jplMURSST41clim","mean_sst",{time:`[(${doy(times[times.length-1])})]`,stride:2,pad:.02}).catch(()=>null);
-    const [bp,cp,kp,hp,cur,clp]=await Promise.all([bathP,chlP,kdP,sshP,curP,climP]);
-    let land,depth;
-    if(bp){const B=toGrids(bp.p,bp.v).fields[0];land=new Uint8Array(NN);depth=new Float32Array(NN);for(let n=0;n<NN;n++){land[n]=!(B[n]<0)?1:0;depth[n]=B[n]<0?-B[n]:NaN;}src.push({ok:1,name:"Bathymetry",detail:bp.label});}
-    else{const smp=sampleData();land=smp.land;depth=smp.depth;src.push({ok:0,name:"Bathymetry",detail:"Unavailable, rough approximation used"});}
-    S.fields.forEach(f=>{for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;fillGaps(f,land,2);});
-    let chl=null;if(cp){chl=toGrids(cp,"chlor_a").fields.map(f=>{for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;return fillGaps(f,land,6);});src.push({ok:1,name:"Chlorophyll",detail:"NOAA VIIRS gap-filled, 9 km daily"});}else src.push({ok:0,name:"Chlorophyll",detail:"Unavailable today"});
-    let kd=null;if(kp){kd=toGrids(kp.p,kp.v).fields[0];for(let n=0;n<NN;n++)if(land[n])kd[n]=NaN;fillGaps(kd,land,6);src.push({ok:1,name:"Water clarity",detail:"NOAA VIIRS + Sentinel-3 Kd490, 9 km"});}else src.push({ok:0,name:"Water clarity",detail:"Unavailable today"});
-    let sla=null;if(hp){sla=toGrids(hp,"sla").fields;src.push({ok:1,name:"Sea surface height + eddies",detail:"NOAA multi-satellite altimetry, 25 km daily (experimental)"});}else src.push({ok:0,name:"Sea surface height",detail:"Unavailable today"});
-    let clim=null;if(clp){clim=toGrids(clp,"mean_sst").fields[0];src.push({ok:1,name:"SST anomaly",detail:"vs MUR 2003-2014 climatology for this date"});}else src.push({ok:0,name:"SST anomaly",detail:"Climatology unavailable"});
-    src.push(cur?{ok:1,name:"Surface currents",detail:"Copernicus Mercator model via Open-Meteo"}:{ok:0,name:"Surface currents",detail:"Unavailable"});
     const local=async f=>{try{const r=await fetch("data/"+f,{cache:"no-store"});return r.ok?await r.json():null;}catch(e){return null;}};
-    const [hj,mj]=await Promise.all([local("himawari.json"),local("moana.json")]);
+    const blk=o=>({times:o.times,fields:o.frames.map(v=>jsonGrid({lats:o.lats,lons:o.lons,values:v}))});
+    const curP=loadOpenMeteoCurrents().catch(()=>null);
+    const [OJ,BF0,hj,mj]=await Promise.all([local("ocean.json"),loadFineBathy(),local("himawari.json"),local("moana.json")]);
+    MAP.BF=BF0;
+    let S,times,cp=null,kp=null,hp=null,clp=null;
+    if(OJ&&OJ.sst){S=blk(OJ.sst);times=S.times;cp=OJ.chl?blk(OJ.chl).fields:null;kp=OJ.kd?blk(OJ.kd).fields[0]:null;hp=OJ.sla?blk(OJ.sla).fields:null;clp=OJ.clim?blk(OJ.clim).fields[0]:null;}
+    else{st.innerHTML='<span class="spin"></span>Downloading satellite data...';
+      const sp=await erddap("jplMURSST41","analysed_sst",{time:"[last-5:1:last]",stride:2,pad:.02});S=toGrids(sp,"analysed_sst");times=S.times.map(t=>t.slice(0,10));
+      const [c,h,cl]=await Promise.all([erddap("nesdisVHNnoaaSNPPnoaa20chlaGapfilledDaily","chlor_a",{time:"[last-5:1:last]",alt:true,pad:.1}).catch(()=>null),erddap("nesdisSSH1day","sla",{time:"[last-5:1:last]",pad:.5}).catch(()=>null),erddap("jplMURSST41clim","mean_sst",{time:`[(${doy(times[times.length-1])})]`,stride:2,pad:.02}).catch(()=>null)]);
+      cp=c?toGrids(c,"chlor_a").fields:null;hp=h?toGrids(h,"sla").fields:null;clp=cl?toGrids(cl,"mean_sst").fields[0]:null;}
+    src.push({ok:1,name:"Sea surface temperature",detail:`NASA JPL MUR, 1 km daily, ${times[0]} to ${times[times.length-1]}`+(OJ?` · fetched ${OJ.updated.slice(0,16).replace("T"," ")} UTC`:"")});
+    let land=new Uint8Array(NN),depth=new Float32Array(NN);
+    if(BF0){for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){const fi=Math.round((lonOf(i)-BF0.lon0)/BF0.res),fj=Math.round((BF0.lat1-latOf(j))/BF0.res),n=ix(i,j);
+      const v=(fi>=0&&fj>=0&&fi<BF0.nx&&fj<BF0.ny)?BF0.depth[fj*BF0.nx+fi]:NaN;depth[n]=v;land[n]=isNaN(v)?1:0;}
+      src.push({ok:1,name:"Bathymetry",detail:BF0.label});}
+    else{for(let n=0;n<NN;n++){land[n]=isNaN(S.fields[S.fields.length-1][n])?1:0;depth[n]=land[n]?NaN:500;}src.push({ok:0,name:"Bathymetry",detail:"Unavailable"});}
+    S.fields.forEach(f=>{for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;fillGaps(f,land,2);});
+    const chl=cp?cp.map(f=>{for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;return fillGaps(f,land,6);}):null;
+    src.push(chl?{ok:1,name:"Chlorophyll",detail:"NOAA VIIRS gap-filled, 9 km daily"}:{ok:0,name:"Chlorophyll",detail:"Unavailable today"});
+    let kd=kp;if(kd){for(let n=0;n<NN;n++)if(land[n])kd[n]=NaN;fillGaps(kd,land,6);}
+    src.push(kd?{ok:1,name:"Water clarity",detail:"NOAA VIIRS + Sentinel-3 Kd490, 9 km"}:{ok:0,name:"Water clarity",detail:"Unavailable today"});
+    const sla=hp;src.push(sla?{ok:1,name:"Sea surface height + eddies",detail:"NOAA multi-satellite altimetry, 25 km daily (experimental)"}:{ok:0,name:"Sea surface height",detail:"Unavailable today"});
+    const clim=clp;src.push(clim?{ok:1,name:"SST anomaly",detail:"vs MUR 2003-2014 climatology for this date"}:{ok:0,name:"SST anomaly",detail:"Climatology unavailable"});
+    const cur=await curP;src.push(cur?{ok:1,name:"Surface currents",detail:"Copernicus Mercator model via Open-Meteo"}:{ok:0,name:"Surface currents",detail:"Unavailable"});
     let hima=null,moana=null;
     if(hj){hima=jsonGrid(hj);for(let n=0;n<NN;n++)if(land[n])hima[n]=NaN;src.push({ok:1,name:"Hourly SST (Himawari-9)",detail:`${hj.hours.length} hourly scans to ${hj.hours[hj.hours.length-1]} UTC, ${Math.round(hj.coverage*100)}% cloud-free`});}
     else src.push({ok:0,name:"Hourly SST (Himawari-9)",detail:"Comes from the morning server job (hosted version only)"});
@@ -672,9 +675,8 @@ async function loadMap(){
     else src.push({ok:0,name:"Temperature at depth",detail:"Moana Project, waiting on data access"});
     D={sst:S.fields,times,chl,depth,land,curr:cur,sla,clim,kd,hima,himaCov:hj?hj.coverage:0,moana,sample:false};
   }catch(e){D=sampleData();MAP.src=[{sample:1,name:"Sample data",detail:"Live feeds unreachable from this preview. Open the file directly in a browser."}];}
-  const BF=D.sample?null:await loadFineBathy();
+  const BF=D.sample?null:MAP.BF;
   MAP.contours=buildContours(BF||{nx:NX,ny:NY,lat1:AREA.lat1,lon0:AREA.lon0,res:AREA.res,depth:D.depth});
-  if(BF&&!D.sample)MAP.src.push({ok:1,name:"Depth contours",detail:BF.label});
   MAP.A=analyse(D);MAP.A.D_kd=D.kd;MAP.day=MAP.A.sst.length-1;MAP.ready=true;MAP.loading=false;
   $("dayslider").max=MAP.A.sst.length-1;$("dayslider").value=MAP.day;
   const defs=layerDefs(MAP.A);document.querySelectorAll(".lyr").forEach(b=>{b.disabled=!defs[b.dataset.l];});

@@ -160,6 +160,69 @@ def moana():
     print("moana: wrote", list(layers))
 
 
+ERD = "https://coastwatch.pfeg.noaa.gov/erddap/griddap/"
+
+
+def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
+    """Download a box from NOAA ERDDAP as CSV; return lats (N to S), lons, times and one 2D grid per time."""
+    import requests, io, csv
+    la0, la1, lo0, lo1 = BOX["lat0"] - pad, BOX["lat1"] + pad, BOX["lon0"] - pad, BOX["lon1"] + pad
+    last = None
+    for latc in (f"[({la0:.3f}):{stride}:({la1:.3f})]", f"[({la1:.3f}):{stride}:({la0:.3f})]"):
+        q = var + time + ("[(0.0)]" if alt else "") + latc + f"[({lo0:.3f}):{stride}:({lo1:.3f})]"
+        try:
+            r = requests.get(ERD + ds + ".csv?" + requests.utils.quote(q, safe=""), timeout=300)
+            r.raise_for_status(); break
+        except Exception as e:
+            last = e; r = None
+    if r is None:
+        raise last
+    rows = list(csv.reader(io.StringIO(r.text)))
+    head = rows[0]; rows = rows[2:]
+    ti = head.index("time") if "time" in head else None
+    li, oi, vi = head.index("latitude"), head.index("longitude"), head.index(var)
+    lats = sorted({float(x[li]) for x in rows}, reverse=True)
+    lons = sorted({float(x[oi]) for x in rows})
+    times = sorted({x[ti] for x in rows}) if ti is not None else ["x"]
+    L = {v: k for k, v in enumerate(lats)}; O = {v: k for k, v in enumerate(lons)}; T = {v: k for k, v in enumerate(times)}
+    arr = np.full((len(times), len(lats), len(lons)), np.nan)
+    for x in rows:
+        try:
+            arr[T[x[ti]] if ti is not None else 0, L[float(x[li])], O[float(x[oi])]] = float(x[vi])
+        except ValueError:
+            pass
+    return lats, lons, [t[:10] for t in times], arr
+
+
+def pack(lats, lons, times, arr, digits=2):
+    frames = [[[None if not np.isfinite(v) else round(float(v), digits) for v in row] for row in a] for a in arr]
+    return {"lats": [round(v, 4) for v in lats], "lons": [round(v, 4) for v in lons], "times": times, "frames": frames}
+
+
+def ocean():
+    """All NOAA ERDDAP layers the app needs (browsers can't read ERDDAP directly)."""
+    out = {"updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z"}
+    lats, lons, times, sst = erddap_frames("jplMURSST41", "analysed_sst", "[last-5:1:last]", stride=2, pad=0.02)
+    out["sst"] = pack(lats, lons, times, sst); log("ocean: MUR SST", times[0], "to", times[-1])
+    jobs = [
+        ("clim", lambda: erddap_frames("jplMURSST41clim", "mean_sst", f"[({dt.datetime.strptime(times[-1], '%Y-%m-%d').timetuple().tm_yday})]", stride=2, pad=0.02), 2),
+        ("chl", lambda: erddap_frames("nesdisVHNnoaaSNPPnoaa20chlaGapfilledDaily", "chlor_a", "[last-5:1:last]", alt=True, pad=0.1), 3),
+        ("sla", lambda: erddap_frames("nesdisSSH1day", "sla", "[last-5:1:last]", pad=0.5), 3),
+    ]
+    for key, fn, digits in jobs:
+        try:
+            out[key] = pack(*fn(), digits=digits); log("ocean:", key, "ok")
+        except Exception as e:
+            log("ocean:", key, "failed:", str(e)[:120])
+    for var, alt in (("kd_490", True), ("kd490", True), ("kd_490", False)):
+        try:
+            out["kd"] = pack(*erddap_frames("nesdisNPPN20S3AkdSCIDINEOFDaily", var, "[last]", alt=alt, pad=0.1), digits=4); log("ocean: kd ok", var); break
+        except Exception as e:
+            log("ocean: kd failed", var, str(e)[:80])
+    with open(os.path.join(OUT, "ocean.json"), "w") as f:
+        json.dump(out, f, separators=(",", ":"))
+
+
 def bathy():
     """One-time job: full-resolution GEBCO (15 arc-second, ~450 m) depth grid for fine contours."""
     import requests, base64, io, csv
@@ -201,7 +264,7 @@ def bathy():
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     ok = 0
-    for job in (bathy, himawari, moana):
+    for job in (bathy, ocean, himawari, moana):
         try:
             job(); ok += 1
         except Exception as e:
