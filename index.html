@@ -106,6 +106,13 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
 .bw .k{font-weight:700}.prime{font-size:11px;background:rgba(255,181,71,.2);color:var(--warm);border-radius:6px;padding:1px 6px;margin-left:6px}
 .bite{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px;margin-top:4px}.bite span{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:1px}.bite b{font-size:16px;color:var(--accent)}
 .next{font-size:12px;color:var(--muted);margin-top:6px}
+.marks{display:flex;flex-direction:column;gap:6px}
+.mk{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:13px}
+.mk .sw{width:10px;height:10px;transform:rotate(45deg);flex:0 0 10px}.mk .nm{font-weight:600;cursor:pointer}.mk .ll{color:var(--muted);font-family:ui-monospace,Menlo,monospace;font-size:12px;margin-left:auto}
+.mk .del{background:none;border:0;color:var(--muted);font-size:16px;cursor:pointer}
+.mkform{display:none;background:var(--panel2);border:1px solid var(--accent);border-radius:12px;padding:10px;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.mkform input{background:#0a1d33;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px;font-size:14px;flex:1 1 140px}
+.mkhint{font-size:12px;color:var(--muted);margin:4px 0 8px}
 </style>
 </head>
 <body>
@@ -137,6 +144,11 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
     <div class="toggles"><label><input type="checkbox" id="fronttog" checked> Fronts</label><label><input type="checkbox" id="eddytog" checked> Eddies</label><label><input type="checkbox" id="curtog" checked> Currents</label></div>
     <div id="probe">Tap anywhere for temperature and coordinates. Pinch, scroll or use + to zoom; drag to pan.</div>
     <div id="legend"></div>
+    <h3>Marks</h3>
+    <div class="actions"><button class="btn pri" id="addmark">+ Add a mark</button><label class="timebar" style="margin:0"><input type="checkbox" id="marktog" checked> Show marks</label></div>
+    <div class="mkhint" id="mkhint">Yellow: charted reefs and shoals (official positions). Pink: your own marks, saved on this device.</div>
+    <div class="mkform" id="mkform"><input id="mkname" placeholder="Name, e.g. The Hook"><input id="mkpos" placeholder="37 26.752 S 176 20.164 E"><button class="btn pri" id="mksave">Save</button><button class="btn" id="mkcancel">Cancel</button></div>
+    <div class="marks" id="marklist"></div>
     <h3>Data inputs</h3><div id="sources"></div>
     <h3>Waypoints and trolling courses</h3>
     <div class="actions"><button class="btn pri" id="gpxbtn">Download GPX for chartplotter</button><button class="btn" id="copybtn">Copy waypoints</button></div>
@@ -649,6 +661,7 @@ function draw(){
     g.strokeStyle="rgba(255,255,255,.85)";g.lineWidth=1.2;g.beginPath();g.moveTo(x,y);g.lineTo(ex,ey);g.stroke();
     g.beginPath();g.moveTo(ex,ey);g.lineTo(ex-Math.sin(r-.5)*4,ey+Math.cos(r-.5)*4);g.lineTo(ex-Math.sin(r+.5)*4,ey+Math.cos(r+.5)*4);g.closePath();g.fillStyle="#fff";g.fill();}
   g.font="11px sans-serif";for(const[nm,la,lo]of PORTS){const x=X(lo),y=Y(la);if(!inView(x,y))continue;g.fillStyle="#fff";g.beginPath();g.arc(x,y,2.5,0,7);g.fill();g.fillStyle="rgba(255,255,255,.9)";g.fillText(nm,x+4,la<-37.85?y-5:y+12);}
+  drawMarks(g,X,Y,W,H);
   for(const w of MAP.wps){g.setLineDash([5,4]);g.strokeStyle="#fff";g.lineWidth=2;g.beginPath();g.moveTo(X(w.ends[0][1]),Y(w.ends[0][0]));g.lineTo(X(w.ends[1][1]),Y(w.ends[1][0]));g.stroke();g.setLineDash([]);
     const x=X(w.lon),y=Y(w.lat);g.fillStyle=MAP.sel===w.n?"#ffb547":"#2ee6c5";g.strokeStyle="#04201b";g.lineWidth=2;g.beginPath();g.arc(x,y,10,0,7);g.fill();g.stroke();
     g.fillStyle="#04201b";g.font="bold 11px sans-serif";g.textAlign="center";g.fillText(w.n,x,y+4);g.textAlign="left";}
@@ -665,7 +678,8 @@ function draw(){
 function probeAt(la,lo){const A=MAP.A,i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res),n=ix(i,j),L=Math.min(MAP.day,A.sst.length-1);
   let land=A.land[n];if(MAP.BF&&!A.sample){const B=MAP.BF,fi=Math.round((lo-B.lon0)/B.res),fj=Math.round((B.lat1-la)/B.res);if(fi>=0&&fj>=0&&fi<B.nx&&fj<B.ny)land=isNaN(B.depth[fj*B.nx+fi]);}
   let dep=A.depth[n];if(MAP.BF&&!A.sample){const B=MAP.BF,fi=Math.round((lo-B.lon0)/B.res),fj=Math.round((B.lat1-la)/B.res);if(fi>=0&&fj>=0&&fi<B.nx&&fj<B.ny)dep=B.depth[fj*B.nx+fi];}
-  const rows=[`<b>${fmtLL(la,lo)}</b>`,`<span class="tipdd">${la.toFixed(5)}, ${lo.toFixed(5)}</span>`];
+  const near=allMarks().map(m=>({m,d:hav(la,lo,m.la,m.lo)/NM})).sort((a,b)=>a.d-b.d)[0];
+  const rows=[near&&near.d<1.5?`<span style="color:${near.m.ch?"#ffd34d":"#ff5fc8"};font-weight:700">${near.m.n}${near.d>.2?` (${near.d.toFixed(1)} nm)`:""}</span>`:"",`<b>${fmtLL(la,lo)}</b>`,`<span class="tipdd">${la.toFixed(5)}, ${lo.toFixed(5)}</span>`];
   if(land)rows.push("Land");
   else{const t=A.sst[L][n];rows.push(`<span class="tipT">${isNaN(t)?"n/a":t.toFixed(1)+"°C"}</span> <span class="tipm">${A.times[L]}</span>`);
     if(A.hima&&!isNaN(A.hima[n]))rows.push(`Hourly SST ${A.hima[n].toFixed(1)}°C`);
@@ -673,7 +687,7 @@ function probeAt(la,lo){const A=MAP.A,i=Math.round((lo-AREA.lon0)/AREA.res),j=Ma
     if(!isNaN(dep))rows.push(`Depth ${Math.round(dep)} m`);
     if(A.chl){const c=A.chl[Math.min(L,A.chl.length-1)][n];if(!isNaN(c))rows.push(`Chlorophyll ${c.toFixed(2)} mg/m³`);}
     rows.push(`Nearest front ${A.frontDist[n]<1?"here":A.frontDist[n].toFixed(1)+" km"}`);}
-  $("maptip").innerHTML=rows.join("<br>")+'<span class="tipx">×</span>';$("maptip").querySelector(".tipx").onclick=ev=>{ev.stopPropagation();MAP.probe=null;redraw();};
+  $("maptip").innerHTML=rows.filter(Boolean).join("<br>")+'<span class="tipx">×</span>';$("maptip").querySelector(".tipx").onclick=ev=>{ev.stopPropagation();MAP.probe=null;redraw();};
   MAP.probe={lat:la,lon:lo};redraw();}
 
 function wpCards(){
@@ -690,6 +704,7 @@ function srcPanel(){$("sources").innerHTML=MAP.src.map(s=>`<div class="src"><spa
 function gpx(){const t=new Date().toISOString();
   return`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Bluewater Bite NZ" xmlns="http://www.topografix.com/GPX/1/1">\n`+
   MAP.wps.map(w=>`<wpt lat="${w.lat.toFixed(5)}" lon="${w.lon.toFixed(5)}"><name>BB WP${w.n}</name><desc>${w.tag}. ${w.sst.toFixed(1)}C, ${Math.round(w.depth)}m</desc><time>${t}</time></wpt>`).join("\n")+"\n"+
+  USERMARKS.map(m=>`<wpt lat="${m.la.toFixed(5)}" lon="${m.lo.toFixed(5)}"><name>${m.n.replace(/[<&>]/g,"")}</name></wpt>`).join("\n")+"\n"+
   MAP.wps.map(w=>`<rte><name>BB Troll ${w.n}</name>${w.ends.map((e,k)=>`<rtept lat="${e[0].toFixed(5)}" lon="${e[1].toFixed(5)}"><name>T${w.n}${k?"B":"A"}</name></rtept>`).join("")}</rte>`).join("\n")+"\n</gpx>";}
 
 function mapUpdate(){if(!MAP.ready)return;MAP.score=scoreField(MAP.A,state.sp);MAP.scoreVer=(MAP.scoreVer||0)+1;let m=0;for(const v of MAP.score)if(v>m)m=v;MAP.scoreMax=m||1;
@@ -770,6 +785,7 @@ $("eddytog").onchange=e=>{MAP.showEddies=e.target.checked;draw();};
     if(pts.size===0&&!moved){const[la,lo]=toLL(e.clientX,e.clientY),r=cv.getBoundingClientRect(),V=viewBox();
       const hit=MAP.wps.find(w=>Math.hypot((w.lon-lo)/(V.lon1-V.lon0)*r.width,(w.lat-la)/(V.lat1-V.lat0)*r.height)<14);
       if(hit){MAP.sel=hit.n;wpCards();document.querySelector(`.wp[data-n="${hit.n}"]`)?.scrollIntoView({behavior:"smooth",block:"nearest"});}
+      if(addingMark){$("mkpos").value=`${la.toFixed(5)}, ${lo.toFixed(5)}`;$("mkhint").textContent="Position set from your tap. Add a name and Save.";}
       probeAt(la,lo);}
     if(pts.size===0)start=null;};
   cv.addEventListener("pointerup",end);cv.addEventListener("pointercancel",end);
@@ -824,6 +840,37 @@ function renderMoon(){
     <div class="next">Sunrise ${sr?nzTime(sr.t):"n/a"} · Sunset ${ss?nzTime(ss.t):"n/a"} · Next new moon ${nn?nzDate(nn):"n/a"} · Next full moon ${nf?nzDate(nf):"n/a"} · Times for the Bay of Plenty (NZ time)</div>`;
   $("moonpanel").querySelectorAll(".mtog button").forEach(b=>b.onclick=()=>{moonDay=+b.dataset.d;renderMoon();});}
 renderMoon();
+
+/* ---------- Marks: charted features + user marks ---------- */
+const CHARTED=[
+ ["Penguin Shoal",-(37+26.752/60),176+20.164/60,"BOPRC"],["Astrolabe Reef",-(37+32.446/60),176+25.625/60,"BOPRC"],
+ ["Brewis Shoal",-(37+34.136/60),176+22.828/60,"BOPRC"],["Okaparu Reef",-(37+34.914/60),176+21.669/60,"BOPRC"],
+ ["Pudney Rock",-(37+31.27/60),176+19.08/60,"NZ Gazette"],["Volkner Rocks",-(37+28.624/60),177+8.015/60,"BOPRC"],
+ ["Motunau Patch",-(37+40.35/60),176+33.85/60,"NZ Gazette"],["Matakana Bank",-(37+36.8/60),176+9.2/60,"NZ Gazette"],
+ ["Pandora Rock",-(36+49.4/60),175+43.3/60,"NZ Gazette"],["Miners Rock",-(36+3.5/60),175+20/60,"NZ Gazette"]];
+let USERMARKS=[];try{USERMARKS=JSON.parse(localStorage.getItem("bwb-marks")||"[]");}catch(e){}
+const saveMarks=()=>{try{localStorage.setItem("bwb-marks",JSON.stringify(USERMARKS));}catch(e){}};
+MAP.showMarks=true;
+function allMarks(){return CHARTED.map(([n,la,lo,src])=>({n,la,lo,src,ch:1})).concat(USERMARKS.map((m,i)=>({...m,i})));}
+function parsePos(t){t=t.trim().toUpperCase().replace(/[°'′"]/g," ");
+  const dec=t.match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/);if(dec){let la=+dec[1],lo=+dec[2];if(la>0&&la<90&&lo>170)la=-la;return[la,lo];}
+  const m=t.match(/(\d+)\s+(\d+(?:\.\d+)?)\s*([NS])\D*?(\d+)\s+(\d+(?:\.\d+)?)\s*([EW])/);if(m){const la=(+m[1]+ +m[2]/60)*(m[3]==="S"?-1:1),lo=(+m[4]+ +m[5]/60)*(m[6]==="W"?-1:1);return[la,lo];}
+  return null;}
+function renderMarkList(){const L=allMarks();
+  $("marklist").innerHTML=L.map(m=>`<div class="mk"><span class="sw" style="background:${m.ch?"#ffd34d":"#ff5fc8"}"></span><span class="nm" data-la="${m.la}" data-lo="${m.lo}">${m.n}</span><span class="ll">${fmtLL(m.la,m.lo)}</span>${m.ch?"":`<button class="del" data-i="${m.i}" title="Delete">×</button>`}</div>`).join("");
+  $("marklist").querySelectorAll(".nm").forEach(el=>el.onclick=()=>{VIEW.z=Math.max(VIEW.z,4);VIEW.clat=+el.dataset.la;VIEW.clon=+el.dataset.lo;probeAt(+el.dataset.la,+el.dataset.lo);$("mapcv").scrollIntoView({behavior:"smooth",block:"center"});});
+  $("marklist").querySelectorAll(".del").forEach(el=>el.onclick=()=>{USERMARKS.splice(+el.dataset.i,1);saveMarks();renderMarkList();redraw();});}
+function drawMarks(g,X,Y,W,H){if(!MAP.showMarks)return;g.font="bold 11px sans-serif";
+  for(const m of allMarks()){const x=X(m.lo),y=Y(m.la);if(x<-10||y<-10||x>W+10||y>H+10)continue;
+    g.save();g.translate(x,y);g.rotate(Math.PI/4);g.fillStyle=m.ch?"#ffd34d":"#ff5fc8";g.strokeStyle="#000";g.lineWidth=1.2;g.fillRect(-4,-4,8,8);g.strokeRect(-4,-4,8,8);g.restore();
+    if(VIEW.z>=1.6||!m.ch){g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.8)";g.strokeText(m.n,x+7,y-6);g.fillStyle=m.ch?"#ffe58a":"#ffb3e6";g.fillText(m.n,x+7,y-6);}}}
+let addingMark=false;
+$("addmark").onclick=()=>{addingMark=true;$("mkform").style.display="flex";$("mkname").value="";$("mkpos").value="";$("mkhint").textContent="Tap the map to drop the mark, or type the position (e.g. 37 26.752 S 176 20.164 E, or -37.446, 176.336).";$("mkname").focus();};
+$("mkcancel").onclick=()=>{addingMark=false;$("mkform").style.display="none";$("mkhint").textContent="Yellow: charted reefs and shoals (official positions). Pink: your own marks, saved on this device.";};
+$("mksave").onclick=()=>{const pos=parsePos($("mkpos").value);const n=$("mkname").value.trim()||"My mark";if(!pos){$("mkhint").textContent="Couldn't read that position. Try 37 26.752 S 176 20.164 E or -37.446, 176.336.";return;}
+  USERMARKS.push({n,la:pos[0],lo:pos[1]});saveMarks();renderMarkList();$("mkcancel").onclick();redraw();};
+$("marktog").onchange=e=>{MAP.showMarks=e.target.checked;redraw();};
+renderMarkList();
 </script>
 </body>
 </html>
