@@ -161,7 +161,8 @@ def moana():
     print("moana: wrote", list(layers))
 
 
-ERDS = ["https://coastwatch.pfeg.noaa.gov/erddap/griddap/", "https://upwell.pfeg.noaa.gov/erddap/griddap/", "https://coastwatch.noaa.gov/erddap/griddap/"]
+ERDS = ["https://coastwatch.pfeg.noaa.gov/erddap/griddap/", "https://upwell.pfeg.noaa.gov/erddap/griddap/", "https://polarwatch.noaa.gov/erddap/griddap/",
+        "https://oceanwatch.pifsc.noaa.gov/erddap/griddap/", "https://coastwatch.noaa.gov/erddap/griddap/", "https://coastwatch.pfeg.noaa.gov/erddap/griddap/"]   # last entry: retry the main server after the others
 
 
 def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
@@ -178,8 +179,11 @@ def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
                 r.raise_for_status(); break
             except Exception as e:
                 last = e; r = None
+                log("  ", erd.split("/")[2], str(e)[:60])
                 if "403" in str(e) or "503" in str(e) or "timed out" in str(e):
                     break          # server refusing us: try the next mirror
+        if r is None and erd == ERDS[-2]:
+            time.sleep(60)
         if r is not None:
             if erd != ERDS[0]:
                 log("  (from mirror", erd.split("/")[2] + ")")
