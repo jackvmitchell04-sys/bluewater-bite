@@ -160,10 +160,48 @@ def moana():
     print("moana: wrote", list(layers))
 
 
+def bathy():
+    """One-time job: full-resolution GEBCO (15 arc-second, ~450 m) depth grid for fine contours."""
+    import requests, base64, io, csv
+    path = os.path.join(OUT, "bathy.json")
+    if os.path.exists(path):
+        log("bathy: already saved, skipping"); return
+    pad = 0.02
+    la0, la1, lo0, lo1 = BOX["lat0"] - pad, BOX["lat1"] + pad, BOX["lon0"] - pad, BOX["lon1"] + pad
+    text, label = None, None
+    for ds, var, lbl in [("GEBCO_2020", "elevation", "GEBCO 2020, 15 arc-second"), ("GEBCO_2020", "altitude", "GEBCO 2020, 15 arc-second"),
+                         ("etopo180", "altitude", "NOAA ETOPO1, 1 arc-minute")]:
+        q = f"{var}[({la0}):1:({la1})][({lo0}):1:({lo1})]"
+        try:
+            r = requests.get(f"https://coastwatch.pfeg.noaa.gov/erddap/griddap/{ds}.csv?" + requests.utils.quote(q, safe=""), timeout=300)
+            r.raise_for_status(); text, label = r.text, lbl; break
+        except Exception as e:
+            log("bathy source failed:", ds, var, str(e)[:100])
+    if text is None:
+        raise RuntimeError("no bathymetry source reachable")
+    rows = list(csv.reader(io.StringIO(text)))[2:]
+    lats = sorted({float(r[0]) for r in rows}, reverse=True)
+    lons = sorted({float(r[1]) for r in rows})
+    li = {v: k for k, v in enumerate(lats)}; oi = {v: k for k, v in enumerate(lons)}
+    grid = np.full((len(lats), len(lons)), -32768, dtype=np.int16)
+    for r in rows:
+        try:
+            z = float(r[2])
+        except ValueError:
+            continue
+        grid[li[float(r[0])], oi[float(r[1])]] = int(max(-30000, min(30000, round(-z))))  # depth in metres, negative = land
+    res = (lons[-1] - lons[0]) / (len(lons) - 1)
+    out = {"source": label, "lat1": lats[0], "lon0": lons[0], "res": res, "nx": len(lons), "ny": len(lats),
+           "depth_int16_b64": base64.b64encode(grid.astype("<i2").tobytes()).decode()}
+    with open(path, "w") as f:
+        json.dump(out, f, separators=(",", ":"))
+    log(f"bathy: {label}, {len(lats)}x{len(lons)} cells, {res*111.32*1000:.0f} m spacing")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     ok = 0
-    for job in (himawari, moana):
+    for job in (bathy, himawari, moana):
         try:
             job(); ok += 1
         except Exception as e:

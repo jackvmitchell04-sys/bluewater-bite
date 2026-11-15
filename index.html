@@ -558,6 +558,29 @@ function contours(f,level){const seg=[];
     if(p.length>=2)seg.push(p[0],p[1]);if(p.length===4)seg.push(p[2],p[3]);}
   return seg;}
 
+/* ---------- fine bathymetry for contours ---------- */
+const CLEVELS=[[20,.5,.3],[50,.6,.35],[100,1,.55],[150,.6,.35],[200,1.6,.85],[300,.6,.35],[500,1,.55],[750,.6,.35],[1000,1.4,.75],[1500,.6,.35],[2000,1,.5]];
+const LABELED={100:1,200:1,500:1,1000:1,2000:1};
+async function loadFineBathy(){
+  try{const r=await fetch("data/bathy.json",{cache:"no-store"});if(r.ok){const o=await r.json();const b=Uint8Array.from(atob(o.depth_int16_b64),c=>c.charCodeAt(0));
+    const i16=new Int16Array(b.buffer),d=new Float32Array(i16.length);for(let k=0;k<d.length;k++)d[k]=i16[k]<=0?NaN:i16[k];
+    return{nx:o.nx,ny:o.ny,lat1:o.lat1,lon0:o.lon0,res:o.res,depth:d,label:o.source+` (${Math.round(o.res*KM*1000)} m)`};}}catch(e){}
+  for(const v of["elevation","altitude"]){try{const p=await erddap("GEBCO_2020",v,{stride:2,pad:.02});const li=p.h.indexOf("latitude"),oi=p.h.indexOf("longitude"),vi=p.h.indexOf(v);
+    const lats=[...new Set(p.rows.map(r=>+r[li]))].sort((a,b)=>b-a),lons=[...new Set(p.rows.map(r=>+r[oi]))].sort((a,b)=>a-b);
+    const L=new Map(lats.map((x,k)=>[x,k])),O=new Map(lons.map((x,k)=>[x,k])),d=new Float32Array(lats.length*lons.length).fill(NaN);
+    for(const r of p.rows){const z=+r[vi];if(z<0)d[L.get(+r[li])*lons.length+O.get(+r[oi])]=-z;}
+    const res=(lons[lons.length-1]-lons[0])/(lons.length-1);return{nx:lons.length,ny:lats.length,lat1:lats[0],lon0:lons[0],res,depth:d,label:`GEBCO 2020 (${Math.round(res*KM*1000)} m)`};}catch(e){}}
+  return null;}
+function buildContours(B){const out=[];
+  for(const[lv,w,a]of CLEVELS){const seg=[];
+    for(let j=0;j<B.ny-1;j++)for(let i=0;i<B.nx-1;i++){const k=j*B.nx+i,va=B.depth[k],vb=B.depth[k+1],vc=B.depth[k+B.nx+1],vd=B.depth[k+B.nx];
+      const A_=isNaN(va)?0:va,Bv=isNaN(vb)?0:vb,C_=isNaN(vc)?0:vc,D_=isNaN(vd)?0:vd;
+      const p=[];const e=(v1,v2,x1,y1,x2,y2)=>{if((v1<lv)!==(v2<lv)){const t=(lv-v1)/(v2-v1);p.push(x1+(x2-x1)*t,y1+(y2-y1)*t);}};
+      e(A_,Bv,i,j,i+1,j);e(Bv,C_,i+1,j,i+1,j+1);e(C_,D_,i+1,j+1,i,j+1);e(D_,A_,i,j+1,i,j);
+      for(let q=0;q+3<p.length;q+=4)seg.push(B.lon0+p[q]*B.res,B.lat1-p[q+1]*B.res,B.lon0+p[q+2]*B.res,B.lat1-p[q+3]*B.res);}
+    out.push({lv,w,a,seg:new Float32Array(seg)});}
+  return out;}
+
 /* ---------- drawing ---------- */
 function draw(){
   const A=MAP.A,cv=$("mapcv"),W=cv.clientWidth,asp=(AREA.lat1-AREA.lat0)/((AREA.lon1-AREA.lon0)*Math.cos(37*RAD)),H=Math.round(W*asp),dpr=window.devicePixelRatio||1;
@@ -570,7 +593,12 @@ function draw(){
   g.fillStyle="#343a34";for(let n=0;n<NN;n++)if(A.land[n]){const i=n%NX,j=(n-i)/NX;g.fillRect(X(lonOf(i))-cw/2,Y(latOf(j))-ch/2,cw+.6,ch+.6);}
   const segs=(f,lv,style,w,dash)=>{const s=contours(f,lv);g.strokeStyle=style;g.lineWidth=w;g.setLineDash(dash||[]);g.beginPath();
     for(let k=0;k<s.length;k+=2){g.moveTo(X(lonOf(s[k][0])),Y(latOf(s[k][1])));g.lineTo(X(lonOf(s[k+1][0])),Y(latOf(s[k+1][1])));}g.stroke();g.setLineDash([]);};
-  for(const[lv,w,a]of[[50,.6,.35],[100,.8,.45],[200,1.4,.75],[500,.8,.45],[1000,1.3,.7],[2000,.8,.4]])segs(A.depth,lv,`rgba(255,255,255,${a})`,w);
+  const placed=[];g.font="9px sans-serif";
+  for(const c of MAP.contours||[]){g.strokeStyle=`rgba(255,255,255,${c.a})`;g.lineWidth=c.w;g.beginPath();const S=c.seg;
+    for(let k=0;k<S.length;k+=4){g.moveTo(X(S[k]),Y(S[k+1]));g.lineTo(X(S[k+2]),Y(S[k+3]));}g.stroke();
+    if(LABELED[c.lv]){let n=0;for(let k=0;k<S.length&&n<5;k+=4*97){const x=X(S[k]),y=Y(S[k+1]);if(x<20||y<14||x>W-30||y>H-14)continue;
+      if(placed.some(([px,py])=>Math.hypot(px-x,py-y)<70))continue;placed.push([x,y]);n++;
+      g.lineWidth=3;g.strokeStyle="rgba(4,20,40,.85)";g.strokeText(c.lv,x-8,y+3);g.fillStyle="#fff";g.fillText(c.lv,x-8,y+3);}}}
   if(MAP.showEddies&&A.slaL){segs(A.slaL,0.08,"rgba(255,90,70,.95)",1.8,[6,3]);segs(A.slaL,-0.08,"rgba(90,160,255,.95)",1.8,[6,3]);}
   if(MAP.showFronts){const e=A.cc[Math.min(MAP.day,A.cc.length-1)];g.fillStyle="rgba(0,0,0,.75)";
     for(let n=0;n<NN;n++)if(e[n]){const i=n%NX,j=(n-i)/NX;g.fillRect(X(lonOf(i))-cw*.5,Y(latOf(j))-ch*.5,cw,ch);}
@@ -588,7 +616,7 @@ function draw(){
   const samples=[0,.25,.5,.75,1].map(li.pal);
   $("legend").innerHTML=`<div><b>${li.title}</b>${li.dated?` · ${A.times[Math.min(MAP.day,A.times.length-1)]}`:""}</div>
    <div class="lgrow"><span>${li.lg[0]}</span><span class="lgbar" style="background:linear-gradient(90deg,${samples.map(c=>`rgb(${c.map(Math.round)})`).join(",")})"></span><span>${li.lg[1]}</span></div>
-   <div class="lgnote">Black: SST fronts (Cayula-Cornillon). Red/blue dashed: warm/cold eddies (SSH ±8 cm). White lines: 50, 100, <b>200</b>, 500, <b>1000</b>, 2000 m. Arrows: surface current. Dashed white: trolling course.</div>`;}
+   <div class="lgnote">Black: SST fronts (Cayula-Cornillon). Red/blue dashed: warm/cold eddies (SSH ±8 cm). White lines: depth every 20 to 500 m (labelled). Arrows: surface current. Dashed white: trolling course.</div>`;}
 
 function wpCards(){
   $("wplist").innerHTML=MAP.wps.map(w=>`<div class="wp ${MAP.sel===w.n?"sel":""}" data-n="${w.n}">
@@ -644,6 +672,9 @@ async function loadMap(){
     else src.push({ok:0,name:"Temperature at depth",detail:"Moana Project, waiting on data access"});
     D={sst:S.fields,times,chl,depth,land,curr:cur,sla,clim,kd,hima,himaCov:hj?hj.coverage:0,moana,sample:false};
   }catch(e){D=sampleData();MAP.src=[{sample:1,name:"Sample data",detail:"Live feeds unreachable from this preview. Open the file directly in a browser."}];}
+  const BF=D.sample?null:await loadFineBathy();
+  MAP.contours=buildContours(BF||{nx:NX,ny:NY,lat1:AREA.lat1,lon0:AREA.lon0,res:AREA.res,depth:D.depth});
+  if(BF&&!D.sample)MAP.src.push({ok:1,name:"Depth contours",detail:BF.label});
   MAP.A=analyse(D);MAP.A.D_kd=D.kd;MAP.day=MAP.A.sst.length-1;MAP.ready=true;MAP.loading=false;
   $("dayslider").max=MAP.A.sst.length-1;$("dayslider").value=MAP.day;
   const defs=layerDefs(MAP.A);document.querySelectorAll(".lyr").forEach(b=>{b.disabled=!defs[b.dataset.l];});
