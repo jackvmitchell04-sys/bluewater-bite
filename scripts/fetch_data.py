@@ -68,15 +68,20 @@ def open_remote(d):
     """Open a THREDDS dataset using whichever service is offered: OPeNDAP, NetCDF Subset, or plain download."""
     import requests, tempfile
     urls = {k.lower(): v for k, v in d.access_urls.items()}
-    dap = next((v for k, v in urls.items() if k in ("opendap", "dap4")), None)
-    if dap:
-        return xr.open_dataset(dap, engine="netcdf4")
     ncss = urls.get("netcdfsubset")
+    r = None
     if ncss:
         q = {"var": "sea_surface_temperature,quality_level", "north": BOX["lat1"], "south": BOX["lat0"],
              "east": BOX["lon1"], "west": BOX["lon0"], "accept": "netcdf4"}
-        r = requests.get(ncss, params=q, timeout=120); r.raise_for_status()
-    else:
+        for attempt in range(2):
+            try:
+                r = requests.get(ncss, params=q, timeout=90); r.raise_for_status(); break
+            except Exception as e:
+                log("  subset attempt failed:", str(e)[:100]); r = None
+    if r is None:
+        dap = next((v for k, v in urls.items() if k in ("opendap", "dap4")), None)
+        if dap:
+            return xr.open_dataset(dap, engine="netcdf4")
         r = requests.get(urls["httpserver"], timeout=300); r.raise_for_status()
     f = tempfile.NamedTemporaryFile(suffix=".nc", delete=False); f.write(r.content); f.close()
     return xr.open_dataset(f.name, engine="netcdf4").load()
