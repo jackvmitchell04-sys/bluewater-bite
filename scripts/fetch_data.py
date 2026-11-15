@@ -19,7 +19,11 @@ from siphon.catalog import TDSCatalog
 
 BOX = dict(lat0=-38.05, lat1=-35.85, lon0=175.15, lon1=178.25)
 OUT = os.path.join(os.path.dirname(__file__), "..", "data")
-HIMA_CATALOG = "https://coastwatch.noaa.gov/thredds/catalog/gridH09AHINRTL3CWW00/catalog.xml"
+HIMA_CATALOGS = [
+    ("IMOS / Bureau of Meteorology Himawari L3C, hourly 0.02 deg", "https://thredds.aodn.org.au/thredds/catalog/IMOS/SRS/SST/ghrsst/L3C-1h/catalog.xml"),
+    ("NOAA ACSPO Himawari-9 AHI L3C, hourly 0.02 deg", "https://coastwatch.noaa.gov/thredds/catalog/gridH09AHINRTL3CWW00/catalog.xml"),
+    ("NOAA ACSPO Himawari-9 AHI L3C, hourly 0.02 deg", "http://coastwatch.noaa.gov/thredds/catalog/gridH09AHINRTL3CWW00/catalog.xml"),
+]
 HOURS = 12
 
 
@@ -61,9 +65,16 @@ def latest_datasets(cat_url, n):
 
 
 def himawari():
-    sets = latest_datasets(HIMA_CATALOG, HOURS)
+    sets, label = [], None
+    for label, url in HIMA_CATALOGS:
+        try:
+            sets = latest_datasets(url, HOURS)
+            if sets:
+                break
+        except Exception as e:
+            log("catalog failed:", url, str(e)[:120])
     if not sets:
-        raise RuntimeError("no Himawari files found")
+        raise RuntimeError("no Himawari files found from any source")
     frames, stack = [], []
     for d in sorted(sets, key=lambda d: d.name):
         try:
@@ -91,7 +102,7 @@ def himawari():
     for layer in arr:
         latest = np.where(np.isfinite(layer), layer, latest)
     coverage = float(np.isfinite(latest).mean())
-    out = {"source": "NOAA ACSPO Himawari-9 AHI L3C, hourly 0.02 deg", "updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z",
+    out = {"source": label, "updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z",
            "hours": frames, "coverage": round(coverage, 3), **grid_json(lats, lons, latest)}
     with open(os.path.join(OUT, "himawari.json"), "w") as f:
         json.dump(out, f, separators=(",", ":"))
