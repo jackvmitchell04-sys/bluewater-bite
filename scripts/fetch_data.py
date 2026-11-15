@@ -8,7 +8,11 @@ and writes small JSON files to data/ that the app reads.
 Each source is optional: if one fails, the others still update and the app
 falls back to its live NOAA feeds.
 """
-import json, os, sys, datetime as dt
+import json, os, sys, socket, time, datetime as dt
+socket.setdefaulttimeout(60)
+T0 = time.time()
+def log(*a):
+    print(f"[{time.time()-T0:6.1f}s]", *a, flush=True)
 import numpy as np
 import xarray as xr
 from siphon.catalog import TDSCatalog
@@ -16,7 +20,7 @@ from siphon.catalog import TDSCatalog
 BOX = dict(lat0=-38.05, lat1=-35.85, lon0=175.15, lon1=178.25)
 OUT = os.path.join(os.path.dirname(__file__), "..", "data")
 HIMA_CATALOG = "https://coastwatch.noaa.gov/thredds/catalog/gridH09AHINRTL3CWW00/catalog.xml"
-HOURS = 24
+HOURS = 12
 
 
 def subset(ds, lat_name="lat", lon_name="lon"):
@@ -40,6 +44,7 @@ def latest_datasets(cat_url, n):
     def walk(cat, depth=0):
         if len(found) >= n or depth > 4:
             return
+        log("  catalog level", depth, len(cat.catalog_refs), "folders,", len(cat.datasets), "files")
         for name in sorted(cat.datasets, reverse=True):
             if name.endswith(".nc"):
                 found.append(cat.datasets[name])
@@ -49,7 +54,9 @@ def latest_datasets(cat_url, n):
             if len(found) >= n:
                 return
             walk(cat.catalog_refs[ref].follow(), depth + 1)
+    log("opening catalog", cat_url)
     walk(TDSCatalog(cat_url))
+    log("found", len(found), "files")
     return found
 
 
@@ -60,7 +67,11 @@ def himawari():
     frames, stack = [], []
     for d in sorted(sets, key=lambda d: d.name):
         try:
-            ds = xr.open_dataset(d.access_urls["OPENDAP"])
+            if time.time() - T0 > 900:
+                log("time budget used, stopping at", len(stack), "files"); break
+            url = d.access_urls.get("OPENDAP") or d.access_urls.get("OpenDAP")
+            log("reading", d.name)
+            ds = xr.open_dataset(url)
             ds = subset(ds)
             sst = ds["sea_surface_temperature"].isel(time=0)
             if "quality_level" in ds:
@@ -71,7 +82,7 @@ def himawari():
             frames.append(t)
             lats, lons = ds["lat"].values, ds["lon"].values
         except Exception as e:
-            print("skip", d.name, e, file=sys.stderr)
+            log("skip", d.name, e, file=sys.stderr)
     if not stack:
         raise RuntimeError("no Himawari data read")
     arr = np.array(stack)
