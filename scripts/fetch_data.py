@@ -20,8 +20,8 @@ from siphon.catalog import TDSCatalog
 BOX = dict(lat0=-38.05, lat1=-35.85, lon0=175.15, lon1=178.25)
 OUT = os.path.join(os.path.dirname(__file__), "..", "data")
 HIMA_CATALOGS = [
-    ("NOAA ACSPO Himawari-9 L3C via NCEI, hourly 0.02 deg", "https://www.ncei.noaa.gov/thredds-ocean/catalog/ghrsst/L3C/PACIFIC/H09/STAR/catalog.xml"),
     ("NOAA ACSPO Himawari-9 L3C via CoastWatch, hourly 0.02 deg", "https://coastwatch.noaa.gov/thredds/catalog/gridH09AHINRTL3CWW00/catalog.xml"),
+    ("NOAA ACSPO Himawari-9 L3C via NCEI, hourly 0.02 deg", "https://www.ncei.noaa.gov/thredds-ocean/catalog/ghrsst/L3C/PACIFIC/H09/STAR/catalog.xml"),
 ]
 MAX_AGE_HOURS = 72
 HOURS = 12
@@ -64,6 +64,24 @@ def latest_datasets(cat_url, n):
     return found
 
 
+def open_remote(d):
+    """Open a THREDDS dataset using whichever service is offered: OPeNDAP, NetCDF Subset, or plain download."""
+    import requests, tempfile
+    urls = {k.lower(): v for k, v in d.access_urls.items()}
+    dap = next((v for k, v in urls.items() if k in ("opendap", "dap4")), None)
+    if dap:
+        return xr.open_dataset(dap, engine="netcdf4")
+    ncss = urls.get("netcdfsubset")
+    if ncss:
+        q = {"var": "sea_surface_temperature,quality_level", "north": BOX["lat1"], "south": BOX["lat0"],
+             "east": BOX["lon1"], "west": BOX["lon0"], "accept": "netcdf4"}
+        r = requests.get(ncss, params=q, timeout=120); r.raise_for_status()
+    else:
+        r = requests.get(urls["httpserver"], timeout=300); r.raise_for_status()
+    f = tempfile.NamedTemporaryFile(suffix=".nc", delete=False); f.write(r.content); f.close()
+    return xr.open_dataset(f.name, engine="netcdf4").load()
+
+
 def himawari():
     sets, label = [], None
     for label, url in HIMA_CATALOGS:
@@ -85,9 +103,8 @@ def himawari():
         try:
             if time.time() - T0 > 900:
                 log("time budget used, stopping at", len(stack), "files"); break
-            url = d.access_urls.get("OPENDAP") or d.access_urls.get("OpenDAP")
-            log("reading", d.name)
-            ds = xr.open_dataset(url)
+            log("reading", d.name, "services:", ",".join(d.access_urls))
+            ds = open_remote(d)
             ds = subset(ds)
             sst = ds["sea_surface_temperature"].isel(time=0)
             if "quality_level" in ds:

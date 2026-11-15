@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install xarray netCDF4 siphon numpy
+      - run: pip install xarray netCDF4 siphon numpy requests
       - run: python scripts/fetch_data.py
         env:
           MOANA_URL: ${{ secrets.MOANA_URL }}
