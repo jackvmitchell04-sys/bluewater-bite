@@ -20,10 +20,10 @@ from siphon.catalog import TDSCatalog
 BOX = dict(lat0=-38.05, lat1=-35.85, lon0=175.15, lon1=178.25)
 OUT = os.path.join(os.path.dirname(__file__), "..", "data")
 HIMA_CATALOGS = [
-    ("IMOS / Bureau of Meteorology Himawari L3C, hourly 0.02 deg", "https://thredds.aodn.org.au/thredds/catalog/IMOS/SRS/SST/ghrsst/L3C-1h/catalog.xml"),
-    ("NOAA ACSPO Himawari-9 AHI L3C, hourly 0.02 deg", "https://coastwatch.noaa.gov/thredds/catalog/gridH09AHINRTL3CWW00/catalog.xml"),
-    ("NOAA ACSPO Himawari-9 AHI L3C, hourly 0.02 deg", "http://coastwatch.noaa.gov/thredds/catalog/gridH09AHINRTL3CWW00/catalog.xml"),
+    ("NOAA ACSPO Himawari-9 L3C via NCEI, hourly 0.02 deg", "https://www.ncei.noaa.gov/thredds-ocean/catalog/ghrsst/L3C/PACIFIC/H09/STAR/catalog.xml"),
+    ("NOAA ACSPO Himawari-9 L3C via CoastWatch, hourly 0.02 deg", "https://coastwatch.noaa.gov/thredds/catalog/gridH09AHINRTL3CWW00/catalog.xml"),
 ]
+MAX_AGE_HOURS = 72
 HOURS = 12
 
 
@@ -69,8 +69,13 @@ def himawari():
     for label, url in HIMA_CATALOGS:
         try:
             sets = latest_datasets(url, HOURS)
-            if sets:
+            newest = max(d.name for d in sets) if sets else ""
+            stamp = newest[:10]
+            age = (dt.datetime.utcnow() - dt.datetime.strptime(stamp, "%Y%m%d%H")).total_seconds() / 3600 if stamp.isdigit() else 1e9
+            log(f"newest file {newest} ({age:.0f} h old)")
+            if sets and age <= MAX_AGE_HOURS:
                 break
+            sets = []
         except Exception as e:
             log("catalog failed:", url, str(e)[:120])
     if not sets:
@@ -93,7 +98,7 @@ def himawari():
             frames.append(t)
             lats, lons = ds["lat"].values, ds["lon"].values
         except Exception as e:
-            log("skip", d.name, e, file=sys.stderr)
+            log("skip", d.name, str(e)[:150])
     if not stack:
         raise RuntimeError("no Himawari data read")
     arr = np.array(stack)
