@@ -7,17 +7,18 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install xarray netCDF4 siphon numpy requests
+      - run: pip install xarray netCDF4 siphon numpy requests pillow tifffile imagecodecs
       - run: python scripts/fetch_data.py
         env:
           MOANA_URL: ${{ secrets.MOANA_URL }}
@@ -27,4 +28,19 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add data/
           git diff --cached --quiet || git commit -m "Morning data $(date -u +%Y-%m-%d)"
+          git pull --rebase -q || true
           git push
+      - name: Morning bite alert (GitHub notifies you by email and in the GitHub app)
+        if: hashFiles('alert_issue.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="$(head -n1 alert_issue.md)"
+          day="$(echo "$title" | cut -d' ' -f3 | tr -d ':')"
+          if gh issue list --state all --search "in:title \"Bite alert $day\"" --json number --jq 'length' | grep -q '^0$'; then
+            gh label create bite-alert --color 2ee6c5 2>/dev/null || true
+            tail -n +2 alert_issue.md > body.md
+            gh issue create --title "$title" --body-file body.md --label bite-alert
+          else
+            echo "alert for $day already posted"
+          fi
