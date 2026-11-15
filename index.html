@@ -109,6 +109,7 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
 .marks{display:flex;flex-direction:column;gap:6px}
 .mk{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:13px}
 .mk .sw{width:10px;height:10px;transform:rotate(45deg);flex:0 0 10px}.mk .nm{font-weight:600;cursor:pointer}.mk .ll{color:var(--muted);font-family:ui-monospace,Menlo,monospace;font-size:12px;margin-left:auto}
+.aptag{font-size:10px;background:rgba(255,181,71,.2);color:var(--warm);border-radius:5px;padding:1px 5px;margin-left:6px}.src2{font-size:11px;color:var(--muted)}
 .mk .del{background:none;border:0;color:var(--muted);font-size:16px;cursor:pointer}
 .mkform{display:none;background:var(--panel2);border:1px solid var(--accent);border-radius:12px;padding:10px;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
 .mkform input{background:#0a1d33;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px;font-size:14px;flex:1 1 140px}
@@ -146,7 +147,7 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
     <div id="legend"></div>
     <h3>Marks</h3>
     <div class="actions"><button class="btn pri" id="addmark">+ Add a mark</button><label class="timebar" style="margin:0"><input type="checkbox" id="marktog" checked> Show marks</label></div>
-    <div class="mkhint" id="mkhint">Yellow: charted reefs and shoals (official positions). Pink: your own marks, saved on this device.</div>
+    <div class="mkhint" id="mkhint">Solid yellow: official or surveyed positions. Hollow orange (≈): approximate, worked out from skipper descriptions and depth contours. Pink: your own marks, saved on this device.</div>
     <div class="mkform" id="mkform"><input id="mkname" placeholder="Name, e.g. The Hook"><input id="mkpos" placeholder="37 26.752 S 176 20.164 E"><button class="btn pri" id="mksave">Save</button><button class="btn" id="mkcancel">Cancel</button></div>
     <div class="marks" id="marklist"></div>
     <h3>Data inputs</h3><div id="sources"></div>
@@ -679,7 +680,7 @@ function probeAt(la,lo){const A=MAP.A,i=Math.round((lo-AREA.lon0)/AREA.res),j=Ma
   let land=A.land[n];if(MAP.BF&&!A.sample){const B=MAP.BF,fi=Math.round((lo-B.lon0)/B.res),fj=Math.round((B.lat1-la)/B.res);if(fi>=0&&fj>=0&&fi<B.nx&&fj<B.ny)land=isNaN(B.depth[fj*B.nx+fi]);}
   let dep=A.depth[n];if(MAP.BF&&!A.sample){const B=MAP.BF,fi=Math.round((lo-B.lon0)/B.res),fj=Math.round((B.lat1-la)/B.res);if(fi>=0&&fj>=0&&fi<B.nx&&fj<B.ny)dep=B.depth[fj*B.nx+fi];}
   const near=allMarks().map(m=>({m,d:hav(la,lo,m.la,m.lo)/NM})).sort((a,b)=>a.d-b.d)[0];
-  const rows=[near&&near.d<1.5?`<span style="color:${near.m.ch?"#ffd34d":"#ff5fc8"};font-weight:700">${near.m.n}${near.d>.2?` (${near.d.toFixed(1)} nm)`:""}</span>`:"",`<b>${fmtLL(la,lo)}</b>`,`<span class="tipdd">${la.toFixed(5)}, ${lo.toFixed(5)}</span>`];
+  const rows=[near&&near.d<1.5?`<span style="color:${near.m.ch?"#ffd34d":"#ff5fc8"};font-weight:700">${near.m.ap?"≈ ":""}${near.m.n}${near.d>.2?` (${near.d.toFixed(1)} nm)`:""}</span>${near.m.ap?'<br><span class="tipm">Approximate position</span>':""}`:"",`<b>${fmtLL(la,lo)}</b>`,`<span class="tipdd">${la.toFixed(5)}, ${lo.toFixed(5)}</span>`];
   if(land)rows.push("Land");
   else{const t=A.sst[L][n];rows.push(`<span class="tipT">${isNaN(t)?"n/a":t.toFixed(1)+"°C"}</span> <span class="tipm">${A.times[L]}</span>`);
     if(A.hima&&!isNaN(A.hima[n]))rows.push(`Hourly SST ${A.hima[n].toFixed(1)}°C`);
@@ -847,26 +848,34 @@ const CHARTED=[
  ["Brewis Shoal",-(37+34.136/60),176+22.828/60,"BOPRC"],["Okaparu Reef",-(37+34.914/60),176+21.669/60,"BOPRC"],
  ["Pudney Rock",-(37+31.27/60),176+19.08/60,"NZ Gazette"],["Volkner Rocks",-(37+28.624/60),177+8.015/60,"BOPRC"],
  ["Motunau Patch",-(37+40.35/60),176+33.85/60,"NZ Gazette"],["Matakana Bank",-(37+36.8/60),176+9.2/60,"NZ Gazette"],
- ["Pandora Rock",-(36+49.4/60),175+43.3/60,"NZ Gazette"],["Miners Rock",-(36+3.5/60),175+20/60,"NZ Gazette"]];
+ ["Pandora Rock",-(36+49.4/60),175+43.3/60,"NZ Gazette"],["Miners Rock",-(36+3.5/60),175+20/60,"NZ Gazette"],
+ ["Mayor Knolls",-(37+19.07/60),176+25.35/60,"Scientific survey record (NMNZ), 320 m"],["Rungapapa Knoll",-37.547,176.98,"Smithsonian Global Volcanism Program"]];
+/* Approximate: placed from published skipper descriptions + GEBCO depth contours. Not surveyed marks. */
+const APPROX=[
+ ["The Hook",-36.553,176.090,"Kink in the 200 m line NE of Red Mercury (fishing.net.nz forum description)"],
+ ["Middle Ground",-36.900,176.230,"Where the 200-500 m lines bunch NE of the Aldermen (forum description)"],
+ ["Footprint",-36.200,176.330,"North of the Hook, outside Cuvier; deep bluenose ground (forum, NZ Herald)"],
+ ["Whanga Trench (area)",-37.150,176.300,"Between the Aldermen and Mayor (Furuno NZ); exact trench line not published"],
+ ["Outer Penguin Rise",-37.405,176.440,"Series of hills SE of the Mayor Knolls (Angler's Planet report)"]];
 let USERMARKS=[];try{USERMARKS=JSON.parse(localStorage.getItem("bwb-marks")||"[]");}catch(e){}
 const saveMarks=()=>{try{localStorage.setItem("bwb-marks",JSON.stringify(USERMARKS));}catch(e){}};
 MAP.showMarks=true;
-function allMarks(){return CHARTED.map(([n,la,lo,src])=>({n,la,lo,src,ch:1})).concat(USERMARKS.map((m,i)=>({...m,i})));}
+function allMarks(){return CHARTED.map(([n,la,lo,src])=>({n,la,lo,src,ch:1})).concat(APPROX.map(([n,la,lo,src])=>({n,la,lo,src,ch:1,ap:1})),USERMARKS.map((m,i)=>({...m,i})));}
 function parsePos(t){t=t.trim().toUpperCase().replace(/[°'′"]/g," ");
   const dec=t.match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/);if(dec){let la=+dec[1],lo=+dec[2];if(la>0&&la<90&&lo>170)la=-la;return[la,lo];}
   const m=t.match(/(\d+)\s+(\d+(?:\.\d+)?)\s*([NS])\D*?(\d+)\s+(\d+(?:\.\d+)?)\s*([EW])/);if(m){const la=(+m[1]+ +m[2]/60)*(m[3]==="S"?-1:1),lo=(+m[4]+ +m[5]/60)*(m[6]==="W"?-1:1);return[la,lo];}
   return null;}
 function renderMarkList(){const L=allMarks();
-  $("marklist").innerHTML=L.map(m=>`<div class="mk"><span class="sw" style="background:${m.ch?"#ffd34d":"#ff5fc8"}"></span><span class="nm" data-la="${m.la}" data-lo="${m.lo}">${m.n}</span><span class="ll">${fmtLL(m.la,m.lo)}</span>${m.ch?"":`<button class="del" data-i="${m.i}" title="Delete">×</button>`}</div>`).join("");
+  $("marklist").innerHTML=L.map(m=>`<div class="mk"><span class="sw" style="${m.ap?"border:2px solid #ffb547;background:transparent":`background:${m.ch?"#ffd34d":"#ff5fc8"}`}"></span><span><span class="nm" data-la="${m.la}" data-lo="${m.lo}">${m.n}</span>${m.ap?'<span class="aptag">approx</span>':""}${m.src?`<br><span class="src2">${m.src}</span>`:""}</span><span class="ll">${fmtLL(m.la,m.lo)}</span>${m.ch?"":`<button class="del" data-i="${m.i}" title="Delete">×</button>`}</div>`).join("");
   $("marklist").querySelectorAll(".nm").forEach(el=>el.onclick=()=>{VIEW.z=Math.max(VIEW.z,4);VIEW.clat=+el.dataset.la;VIEW.clon=+el.dataset.lo;probeAt(+el.dataset.la,+el.dataset.lo);$("mapcv").scrollIntoView({behavior:"smooth",block:"center"});});
   $("marklist").querySelectorAll(".del").forEach(el=>el.onclick=()=>{USERMARKS.splice(+el.dataset.i,1);saveMarks();renderMarkList();redraw();});}
 function drawMarks(g,X,Y,W,H){if(!MAP.showMarks)return;g.font="bold 11px sans-serif";
   for(const m of allMarks()){const x=X(m.lo),y=Y(m.la);if(x<-10||y<-10||x>W+10||y>H+10)continue;
-    g.save();g.translate(x,y);g.rotate(Math.PI/4);g.fillStyle=m.ch?"#ffd34d":"#ff5fc8";g.strokeStyle="#000";g.lineWidth=1.2;g.fillRect(-4,-4,8,8);g.strokeRect(-4,-4,8,8);g.restore();
-    if(VIEW.z>=1.6||!m.ch){g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.8)";g.strokeText(m.n,x+7,y-6);g.fillStyle=m.ch?"#ffe58a":"#ffb3e6";g.fillText(m.n,x+7,y-6);}}}
+    g.save();g.translate(x,y);g.rotate(Math.PI/4);if(m.ap){g.strokeStyle="#000";g.lineWidth=3.5;g.strokeRect(-5,-5,10,10);g.strokeStyle="#ffb547";g.lineWidth=2;g.strokeRect(-5,-5,10,10);}else{g.fillStyle=m.ch?"#ffd34d":"#ff5fc8";g.strokeStyle="#000";g.lineWidth=1.2;g.fillRect(-4,-4,8,8);g.strokeRect(-4,-4,8,8);}g.restore();
+    if(VIEW.z>=1.6||!m.ch){g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.8)";g.strokeText(m.n,x+7,y-6);g.fillStyle=m.ap?"#ffc978":m.ch?"#ffe58a":"#ffb3e6";g.fillText((m.ap?"≈ ":"")+m.n,x+7,y-6);}}}
 let addingMark=false;
 $("addmark").onclick=()=>{addingMark=true;$("mkform").style.display="flex";$("mkname").value="";$("mkpos").value="";$("mkhint").textContent="Tap the map to drop the mark, or type the position (e.g. 37 26.752 S 176 20.164 E, or -37.446, 176.336).";$("mkname").focus();};
-$("mkcancel").onclick=()=>{addingMark=false;$("mkform").style.display="none";$("mkhint").textContent="Yellow: charted reefs and shoals (official positions). Pink: your own marks, saved on this device.";};
+$("mkcancel").onclick=()=>{addingMark=false;$("mkform").style.display="none";$("mkhint").textContent="Solid yellow: official or surveyed positions. Hollow orange (≈): approximate, worked out from skipper descriptions and depth contours. Pink: your own marks, saved on this device.";};
 $("mksave").onclick=()=>{const pos=parsePos($("mkpos").value);const n=$("mkname").value.trim()||"My mark";if(!pos){$("mkhint").textContent="Couldn't read that position. Try 37 26.752 S 176 20.164 E or -37.446, 176.336.";return;}
   USERMARKS.push({n,la:pos[0],lo:pos[1]});saveMarks();renderMarkList();$("mkcancel").onclick();redraw();};
 $("marktog").onchange=e=>{MAP.showMarks=e.target.checked;redraw();};
