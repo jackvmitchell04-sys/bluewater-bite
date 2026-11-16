@@ -501,7 +501,8 @@ function smooth(f,r=1){const o=new Float32Array(NN).fill(NaN);for(let j=0;j<NY;j
   o[ix(i,j)]=s/c;}return o;}
 
 /* Cayula-Cornillon single-image edge detection (1992): histogram bimodality + spatial cohesion in overlapping windows */
-function cayulaCornillon(f,{win=16,step=8,minDT=0.3,theta=0.7,coh=0.92,cohAll=0.90}={}){
+/* theta 0.82: a smooth linear ramp scores exactly 0.75, so anything below ~0.8 draws fake fronts across gentle gradients */
+function cayulaCornillon(f,{win=16,step=8,minDT=0.3,theta=0.82,coh=0.92,cohAll=0.90}={}){
   const edge=new Uint8Array(NN);
   for(let j0=0;j0+win<=NY;j0+=step)for(let i0=0;i0+win<=NX;i0+=step){
     const vals=[];for(let j=j0;j<j0+win;j++)for(let i=i0;i<i0+win;i++){const v=f[ix(i,j)];if(!isNaN(v))vals.push(v);}
@@ -522,9 +523,16 @@ function cayulaCornillon(f,{win=16,step=8,minDT=0.3,theta=0.7,coh=0.92,cohAll=0.
 
 /* gradient-ridge fronts: strongest 10% of SST gradients, thinned to the ridge line. Catches sharp breaks the
    histogram method misses (e.g. a break hugging a steep slope or an island wake) */
-function gradFronts(f){const G=gradient(smooth(f)),v=[...G.g].filter(x=>!isNaN(x)).sort((a,b)=>a-b),thr=Math.max(.045,v[Math.floor(v.length*.9)]||1),e=new Uint8Array(NN);
-  for(let j=1;j<NY-1;j++)for(let i=1;i<NX-1;i++){const n=ix(i,j),g=G.g[n];if(!(g>=thr))continue;const sx=Math.round(G.gx[n]/g),sy=Math.round(G.gy[n]/g);
-    const a=G.g[ix(i+sx,j-sy)],b=G.g[ix(i-sx,j+sy)];if(!(a>g)&&!(b>g))e[n]=1;}
+function gradFronts(f){const G=gradient(smooth(f)),v=[...G.g].filter(x=>!isNaN(x)).sort((a,b)=>a-b),thr=Math.max(.05,v[Math.floor(v.length*.9)]||1),e=new Uint8Array(NN);
+  // Canny-style: compare with the gradient half a step either side along the gradient direction (bilinear, so no grid snapping)
+  const at=(x,y)=>{const i=Math.floor(x),j=Math.floor(y),tx=x-i,ty=y-j;if(i<0||j<0||i>=NX-1||j>=NY-1)return NaN;
+    return G.g[ix(i,j)]*(1-tx)*(1-ty)+G.g[ix(i+1,j)]*tx*(1-ty)+G.g[ix(i,j+1)]*(1-tx)*ty+G.g[ix(i+1,j+1)]*tx*ty;};
+  for(let j=2;j<NY-2;j++)for(let i=2;i<NX-2;i++){const n=ix(i,j),g=G.g[n];if(!(g>=thr))continue;const ux=G.gx[n]/g,uy=-G.gy[n]/g;
+    const a=at(i+ux,j+uy),b=at(i-ux,j-uy);if(g>=a*1.03&&g>=b*1.03)e[n]=1;}
+  // keep only connected front lines at least ~12 km long, not specks
+  const seen=new Uint8Array(NN);for(let n0=0;n0<NN;n0++){if(!e[n0]||seen[n0])continue;const q=[n0];seen[n0]=1;
+    for(let h=0;h<q.length;h++){const n=q[h],i=n%NX,j=(n-i)/NX;for(let b=-1;b<=1;b++)for(let a=-1;a<=1;a++){const x=i+a,y=j+b;if(x<0||y<0||x>=NX||y>=NY)continue;const m=ix(x,y);if(e[m]&&!seen[m]){seen[m]=1;q.push(m);}}}
+    if(q.length<6)for(const n of q)e[n]=0;}
   return e;}
 /* geostrophic velocity from SLA, Okubo-Weiss eddy parameter */
 function geostrophy(sla){
@@ -550,8 +558,15 @@ function eddyComponents(A){const seen=new Uint8Array(NN);A.eddyList=[];
 function analyse(D){
   const A=D,L=D.sst.length-1;
   A.fr=D.sst.map(f=>gradient(f));
-  A.cc=D.sst.map(f=>{const c=cayulaCornillon(smooth(f),{minDT:0.25}),r=gradFronts(f);for(let n=0;n<NN;n++)c[n]|=r[n];return c;});
-  if(D.hima&&D.himaCov>=0.3){A.himaEdge=cayulaCornillon(smooth(D.hima),{minDT:0.25});const r=gradFronts(D.hima);for(let n=0;n<NN;n++)if(A.himaEdge[n]||r[n])A.cc[L][n]=1;}
+  // two independent detectors: Cayula-Cornillon (two water masses) and Canny-style gradient ridges; CC pixels must sit on a real gradient
+  A.cc=D.sst.map((f,k)=>{const c=cayulaCornillon(smooth(f),{minDT:0.25}),r=gradFronts(f),G=A.fr[k].g,gv=[...G].filter(x=>!isNaN(x)).sort((a,b)=>a-b),gmin=gv[Math.floor(gv.length*.6)]||0;
+    for(let n=0;n<NN;n++)c[n]=(c[n]&&G[n]>=gmin)||r[n]?1:0;return c;});
+  if(D.hima&&D.himaCov>=0.3){
+    // hourly fronts are newer but the 12-hour composite has seams between scenes, so each hourly front pixel
+    // must be backed by a real gradient in the daily SST within ~4 km
+    A.himaEdge=cayulaCornillon(smooth(D.hima),{minDT:0.25});const r=gradFronts(D.hima),G=A.fr[L].g,gv=[...G].filter(x=>!isNaN(x)).sort((a,b)=>a-b),gmin=gv[Math.floor(gv.length*.6)]||0;
+    for(let j=2;j<NY-2;j++)for(let i=2;i<NX-2;i++){const n=ix(i,j);if(!(A.himaEdge[n]||r[n]))continue;let ok=false;
+      for(let b=-2;b<=2&&!ok;b++)for(let a=-2;a<=2;a++)if(G[ix(i+a,j+b)]>=gmin){ok=true;break;}if(ok)A.cc[L][n]=1;}}
   A.ccFreq=new Float32Array(NN);for(const e of A.cc)for(let n=0;n<NN;n++)A.ccFreq[n]+=e[n]/A.cc.length;
   A.ccFreqS=smooth(A.ccFreq,2);
   A.frontDist=distKm(A.cc[L]);
@@ -591,16 +606,48 @@ function brg(a,b,c,d){const y=Math.sin((d-b)*RAD)*Math.cos(c*RAD),x=Math.cos(a*R
 const onLandRaw=(la,lo,land)=>{const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res);return i<0||j<0||i>=NX||j>=NY||land[ix(i,j)];};
 const onLand=(la,lo)=>{const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res);return i<0||j<0||i>=NX||j>=NY||MAP.A.land[ix(i,j)]||!(MAP.A.depth[ix(i,j)]>5);};
 
-function waypoints(A,score,n=8){
-  const L=A.sst.length-1,cells=[],RM=resMask();for(let k=0;k<NN;k++){const ci=k%NX,cj=(k-ci)/NX;if(score[k]>0&&ci>4&&cj>4&&cj<NY-5&&lonOf(ci)<=178.0&&!RM[k])cells.push(k);}
+/* ---------- waypoints and trolling courses ----------
+   20 waypoints, at least ~11 km apart, ranked by score. Each gets a trolling course that:
+   1. traces the actual break: steps along the isotherm (perpendicular to the SST gradient), re-reading the
+      gradient every 300 m so the line bends with the front; if there's no front it follows the depth contour,
+   2. zig-zags across it in ~0.8 nm legs, 0.35 nm either side, so lures sweep both the warm and cool side,
+   3. runs into the surface current (lures swim better, you hold on the break longer) and reports the warm side. */
+const WP_N=20,WP_R=5;
+function traceLine(A,la,lo,mode,dist){const L=A.sst.length-1,G=mode==="front"?A.fr[L]:A.bg,step=.3,pts=[[la,lo]];
+  const dirAt=(a,o)=>{const i=Math.round((o-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-a)/AREA.res);if(i<1||j<1||i>=NX-1||j>=NY-1)return null;const n=ix(i,j),gx=G.gx[n],gy=G.gy[n],m=Math.hypot(gx,gy);
+    return m>0&&!isNaN(m)?{ax:-gy/m,ay:gx/m,g:m}:null;};
+  for(const sgn of[1,-1]){let a=la,o=lo,prev=null,out=[];
+    for(let d=0;d<dist;d+=step){const dd=dirAt(a,o);let ax,ay;if(dd){ax=dd.ax;ay=dd.ay;if(prev&&ax*prev[0]+ay*prev[1]<0){ax=-ax;ay=-ay;}if(!prev){ax*=sgn;ay*=sgn;}}else if(prev){[ax,ay]=prev;}else break;
+      if(prev){ax=.6*ax+.4*prev[0];ay=.6*ay+.4*prev[1];const m=Math.hypot(ax,ay);ax/=m;ay/=m;}
+      const na=a+ay*step/KM,no=o+ax*step/(KM*Math.cos(a*RAD));if(onLand(na,no)||reserveAt(na,no)||na>AREA.lat1||na<AREA.lat0||no<AREA.lon0||no>AREA.lon1)break;
+      a=na;o=no;prev=[ax,ay];out.push([a,o]);}
+    if(sgn>0)pts.push(...out);else pts.unshift(...out.reverse());}
+  return pts;}
+function lineLen(p){let s=0;for(let k=1;k<p.length;k++)s+=hav(p[k-1][0],p[k-1][1],p[k][0],p[k][1]);return s;}
+function zigzag(A,line,mode){const L=A.sst.length-1,legKm=.8*NM,off=.35*NM,out=[],tot=lineLen(line);if(tot<1)return line;
+  let acc=0,k=1,side=1;const at=s=>{while(k<line.length-1&&acc+hav(line[k-1][0],line[k-1][1],line[k][0],line[k][1])<s){acc+=hav(line[k-1][0],line[k-1][1],line[k][0],line[k][1]);k++;}
+    const a=line[k-1],b=line[k],seg=hav(a[0],a[1],b[0],b[1])||1e-9,t=Math.min(1,(s-acc)/seg);return[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,brg(a[0],a[1],b[0],b[1])];};
+  for(let s=0;s<=tot+1e-6;s+=legKm){const[la,lo,h]=at(Math.min(s,tot)),r=(h+90*side)*RAD,d=s===0||s>=tot-1e-6?0:off;
+    const p=[la+Math.cos(r)*d/KM,lo+Math.sin(r)*d/(KM*Math.cos(la*RAD))];out.push(onLand(p[0],p[1])||reserveAt(p[0],p[1])?[la,lo]:p);side=-side;}
+  return out;}
+function courseInfo(A,line,mode){const L=A.sst.length-1,a=line[0],b=line[line.length-1],h=brg(a[0],a[1],b[0],b[1]);
+  // current along the course (positive = with us)
+  let along=null;if(A.mu){let s=0,c=0;for(const p of line){const i=Math.round((p[1]-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-p[0])/AREA.res);if(i<0||j<0||i>=NX||j>=NY)continue;const n=ix(i,j);if(isNaN(A.mu[n]))continue;
+    s+=(A.mu[n]*Math.sin(h*RAD)+A.mv[n]*Math.cos(h*RAD))*1.944;c++;}along=c?s/c:null;}
+  // warm side relative to direction of travel
+  const m=line[Math.floor(line.length/2)],i=Math.round((m[1]-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-m[0])/AREA.res),n=ix(i,j);
+  const gx=A.fr[L].gx[n],gy=A.fr[L].gy[n],hx=Math.sin(h*RAD),hy=Math.cos(h*RAD),cross=hx*gy-hy*gx;
+  return{h,along,warm:mode==="front"&&Math.hypot(gx,gy)>.02?(cross>0?"port":"starboard"):null};}
+function waypoints(A,score,n=WP_N){
+  const L=A.sst.length-1,cells=[],RM=resMask();for(let k=0;k<NN;k++){const ci=k%NX,cj=(k-ci)/NX;if(score[k]>0&&ci>4&&cj>4&&cj<NY-5&&lonOf(ci)<=178.0&&!RM[k]&&A.depth[k]>25)cells.push(k);}
   cells.sort((a,b)=>score[b]-score[a]);
-  const top=score[cells[0]]||0,picked=[],R=11;
-  for(const k of cells){if(picked.length>=n||score[k]<top*.4)break;const i=k%NX,j=(k-i)/NX;if(picked.some(p=>Math.abs(p.i-i)<=R&&Math.abs(p.j-j)<=R))continue;picked.push({i,j,k});}
+  const top=score[cells[0]]||0,picked=[];
+  for(const k of cells){if(picked.length>=n||score[k]<top*.3)break;const i=k%NX,j=(k-i)/NX;if(picked.some(p=>Math.hypot(p.i-i,(p.j-j)*1.25)<=WP_R))continue;picked.push({i,j,k});}
   return picked.map((p,w)=>{const la=latOf(p.j),lo=lonOf(p.i);
-    let gx=A.fr[L].gx[p.k],gy=A.fr[L].gy[p.k],src="along the temperature break";
-    if(!(Math.hypot(gx,gy)>0.06||A.frontDist[p.k]<3)){gx=A.bg.gx[p.k];gy=A.bg.gy[p.k];src="along the depth contour";}
-    let ax=-gy,ay=gx;const m=Math.hypot(ax,ay)||1;ax/=m;ay/=m;let half=3*NM,ends;
-    for(let t=0;t<4;t++){ends=[-1,1].map(s=>[la+s*ay*half/KM,lo+s*ax*half/(KM*Math.cos(la*RAD))]);if(!ends.some(e=>onLand(e[0],e[1])||reserveAt(e[0],e[1])))break;half/=2;}
+    const onFront=Math.hypot(A.fr[L].gx[p.k],A.fr[L].gy[p.k])>0.05||A.frontDist[p.k]<3,mode=onFront?"front":"depth";
+    let line=traceLine(A,la,lo,mode,3*NM);if(lineLen(line)<1.5)line=[[la,lo],[la+.01,lo]];
+    let info=courseInfo(A,line,mode);if(info.along!=null&&info.along>0){line=line.reverse();info=courseInfo(A,line,mode);}   // troll into the current
+    const course=zigzag(A,line,mode),len=lineLen(course)/NM;
     const port=PORTS.map(([nm,pa,po])=>({nm,d:hav(pa,po,la,lo)/NM,b:brg(pa,po,la,lo)})).sort((a,b)=>a.d-b.d)[0];
     const per=A.ccFreq[p.k],fd=A.frontDist[p.k],why=[];
     if(fd<3)why.push(per>=.6?"Stable front, held most of the week":per<=.2?"New front, formed in last 1-2 days":"Front building through the week");
@@ -608,9 +655,11 @@ function waypoints(A,score,n=8){
     if(A.eddy&&A.eddy[p.k]===1)why.push("inside warm-core eddy");else if(A.warmDist&&A.warmDist[p.k]<20)why.push("edge of warm-core eddy");
     if(A.chlDist&&A.chlDist[p.k]<4)why.push("on a chlorophyll edge");
     if(A.convN&&A.convN[p.k]>.5)why.push("currents converging (bait and weed lines)");else if(A.convN&&A.convN[p.k]<-.5)why.push("upwelling edge");
+    if(A.slope&&A.slope[p.k]>.05)why.push("steep slope / canyon wall");
     if(A.anom&&!isNaN(A.anom[p.k])&&Math.abs(A.anom[p.k])>0.5)why.push(`water ${A.anom[p.k]>0?"+":""}${A.anom[p.k].toFixed(1)}°C vs normal`);
     return{n:w+1,lat:la,lon:lo,score:Math.round(score[p.k]*100),sst:A.sst[L][p.k],brk:(A.fr[L].g[p.k]||0)*2,depth:A.depth[p.k],
-      chl:A.chl?A.chl[A.chl.length-1][p.k]:null,change:A.change[p.k],tag:why.join(", "),ends,head:brg(ends[0][0],ends[0][1],ends[1][0],ends[1][1]),len:2*half/NM,src,port};});}
+      chl:A.chl?A.chl[A.chl.length-1][p.k]:null,change:A.change[p.k],tag:why.join(", "),line,course,ends:[course[0],course[course.length-1]],head:info.h,along:info.along,warm:info.warm,len,mode,
+      src:mode==="front"?"following the temperature break":"following the depth contour",port};});}
 
 /* ---------- formatting & palettes ---------- */
 const ddm=(v,pos,neg)=>{const a=Math.abs(v),d=Math.floor(a);return`${d}°${((a-d)*60).toFixed(3).padStart(6,"0")}'${v<0?neg:pos}`;};
@@ -819,8 +868,12 @@ function draw(){
   g.font="11px sans-serif";for(const[nm,la,lo]of PORTS){const x=X(lo),y=Y(la);if(!inView(x,y))continue;g.fillStyle=chartMode?"#222":"#fff";g.beginPath();g.arc(x,y,2.5,0,7);g.fill();g.fillStyle=chartMode?"#1a1a1a":"rgba(255,255,255,.9)";g.fillText(nm,x+4,la<-37.85?y-5:y+12);}
   drawMarks(g,X,Y,W,H);
   drawCatches(g,X,Y,inView);
-  for(const w of MAP.wps){g.setLineDash([5,4]);g.strokeStyle=chartMode?"#0b2a55":"#fff";g.lineWidth=2;g.beginPath();g.moveTo(X(w.ends[0][1]),Y(w.ends[0][0]));g.lineTo(X(w.ends[1][1]),Y(w.ends[1][0]));g.stroke();g.setLineDash([]);
-    const x=X(w.lon),y=Y(w.lat);g.fillStyle=MAP.sel===w.n?"#ffb547":"#2ee6c5";g.strokeStyle="#04201b";g.lineWidth=2;g.beginPath();g.arc(x,y,10,0,7);g.fill();g.stroke();
+  for(const w of MAP.wps){const sel=MAP.sel===w.n,show=sel||VIEW.z>=2||MAP.wps.length<=8;
+    if(show){g.setLineDash([3,4]);g.strokeStyle=chartMode?"rgba(11,42,85,.6)":"rgba(255,255,255,.55)";g.lineWidth=1.2;g.beginPath();w.line.forEach((p,k)=>k?g.lineTo(X(p[1]),Y(p[0])):g.moveTo(X(p[1]),Y(p[0])));g.stroke();g.setLineDash([]);
+      g.strokeStyle=sel?"#ffb547":chartMode?"#0b2a55":"#fff";g.lineWidth=sel?2.6:1.8;g.beginPath();w.course.forEach((p,k)=>k?g.lineTo(X(p[1]),Y(p[0])):g.moveTo(X(p[1]),Y(p[0])));g.stroke();
+      const e=w.course[w.course.length-1],e0=w.course[w.course.length-2]||w.course[0];arrow(g,X(e0[1]),Y(e0[0]),brg(e0[0],e0[1],e[0],e[1]),Math.hypot(X(e[1])-X(e0[1]),Y(e[0])-Y(e0[0])),sel?"#ffb547":chartMode?"#0b2a55":"#fff",sel?2.6:1.8);
+      const s0=w.course[0];g.fillStyle="#2ee6c5";g.beginPath();g.arc(X(s0[1]),Y(s0[0]),3.5,0,7);g.fill();}
+    const x=X(w.lon),y=Y(w.lat),rr=VIEW.z<1.5&&MAP.wps.length>8?8:10;g.fillStyle=sel?"#ffb547":w.n<=5?"#2ee6c5":"#8ff0dc";g.strokeStyle="#04201b";g.lineWidth=2;g.beginPath();g.arc(x,y,rr,0,7);g.fill();g.stroke();
     g.fillStyle="#04201b";g.font="bold 11px sans-serif";g.textAlign="center";g.fillText(w.n,x,y+4);g.textAlign="left";}
   // GPS position and line to target
   const me=MAP.me;if(MAP.target&&me){g.setLineDash([8,5]);g.strokeStyle="#4fb8ff";g.lineWidth=2.2;g.beginPath();g.moveTo(X(me.lon),Y(me.lat));g.lineTo(X(MAP.target.lo),Y(MAP.target.la));g.stroke();g.setLineDash([]);}
@@ -835,7 +888,7 @@ function draw(){
   const samples=[0,.25,.5,.75,1].map(li.pal);
   $("legend").innerHTML=`<div><b>${li.title}</b>${li.dated?` · ${A.times[Math.min(MAP.day,A.times.length-1)]}`:""}</div>
    <div class="lgrow"><span>${li.lg[0]}</span><span class="lgbar" style="background:linear-gradient(90deg,${samples.map(c=>`rgb(${c.map(Math.round)})`).join(",")})"></span><span>${li.lg[1]}</span></div>
-   <div class="lgnote">${li.note?li.note+" ":""}${chartMode?"Shaded seafloor relief from the bathymetry survey. Italic numbers: depth on knoll and reef tops. ":"White dots: SST fronts (Cayula-Cornillon plus strongest-gradient ridges, including hourly Himawari). Red/blue dashed outlines: warm/cold eddies. "}Black lines: depth contours (more appear as you zoom). Red dashed areas: marine reserves, no fishing. White arrows: surface current${MAP.showWind?"; yellow: wind (kn)":""}. Dashed white: trolling course.</div>`;
+   <div class="lgnote">${li.note?li.note+" ":""}${chartMode?"Shaded seafloor relief from the bathymetry survey. Italic numbers: depth on knoll and reef tops. ":"White dots: SST fronts (Cayula-Cornillon plus strongest-gradient ridges, including hourly Himawari). Red/blue dashed outlines: warm/cold eddies. "}Black lines: depth contours (more appear as you zoom). Red dashed areas: marine reserves, no fishing. White arrows: surface current${MAP.showWind?"; yellow: wind (kn)":""}. White zig-zag: trolling course (dot = start, arrow = finish) crossing the break it follows (dotted). Waypoints 1 to 5 are the top-ranked; all 20 courses show from 2x zoom.</div>`;
   navUpdate();}
 
 /* ---------- protected areas (no fishing) ---------- */
@@ -949,7 +1002,8 @@ function wpCards(){
     <div class="wpt">${w.tag}</div>
     <div class="wpc">${fmtLL(w.lat,w.lon)}</div>
     <div class="chips"><span class="chip">${w.sst.toFixed(1)}°C</span><span class="chip">Break ${w.brk.toFixed(2)}°C/2 km</span><span class="chip">${Math.round(w.depth)} m deep</span>${w.chl!=null&&!isNaN(w.chl)?`<span class="chip">Chl ${w.chl.toFixed(2)}</span>`:""}<span class="chip">5-day ${w.change>=0?"+":""}${w.change.toFixed(1)}°C</span></div>
-    <div class="wpr">Troll ${w.len.toFixed(1)} nm on ${Math.round(w.head).toString().padStart(3,"0")}°/${Math.round((w.head+180)%360).toString().padStart(3,"0")}° ${w.src}. ${w.port.d.toFixed(0)} nm on ${Math.round(w.port.b).toString().padStart(3,"0")}° from ${w.port.nm}.</div></div>`).join("");
+    <div class="wpr">Troll course ${w.len.toFixed(1)} nm, zig-zagging ${w.src}, general heading ${Math.round(w.head).toString().padStart(3,"0")}°T${w.along!=null?`, ${w.along<-.05?`into a ${Math.abs(w.along).toFixed(1)} kn current`:"current slack along the line"}`:""}.${w.warm?` Warm water on your ${w.warm} side.`:""} Start ${fmtLL(w.course[0][0],w.course[0][1])}.</div>
+    <div class="srcm">${w.port.d.toFixed(0)} nm on ${Math.round(w.port.b).toString().padStart(3,"0")}° from ${w.port.nm}</div></div>`).join("");
   $("wplist").querySelectorAll(".wp").forEach(el=>el.onclick=()=>{MAP.sel=+el.dataset.n;const w=MAP.wps.find(x=>x.n===MAP.sel);MAP.target={n:"WP"+w.n,la:w.lat,lo:w.lon};draw();wpCards();});}
 
 function srcPanel(){$("sources").innerHTML=`<div class="mkhint">${MAP.src.filter(s=>s.ok).length} live data streams, plus moon and sun computed on the device. Green: current. Amber: stale, so it's left out of the score. Red: unavailable.</div>`+MAP.src.map(s=>`<div class="src"><span class="dot ${s.ok?"ok":s.sample||s.stale?"smp":"bad"}"></span><div><b>${s.name}</b> <span class="srcm">${s.detail}</span></div></div>`).join("");}
@@ -959,7 +1013,7 @@ function gpx(){const t=new Date().toISOString();
   MAP.wps.map(w=>`<wpt lat="${w.lat.toFixed(5)}" lon="${w.lon.toFixed(5)}"><name>BB WP${w.n}</name><desc>${w.tag}. ${w.sst.toFixed(1)}C, ${Math.round(w.depth)}m</desc><time>${t}</time></wpt>`).join("\n")+"\n"+
   USERMARKS.map(m=>`<wpt lat="${m.la.toFixed(5)}" lon="${m.lo.toFixed(5)}"><name>${m.n.replace(/[<&>]/g,"")}</name></wpt>`).join("\n")+"\n"+
   CATCHES.map(c=>`<wpt lat="${c.la.toFixed(5)}" lon="${c.lo.toFixed(5)}"><name>${(c.spn||"Catch").replace(/[<&>]/g,"")} ${c.t.slice(0,10)}</name><desc>${c.sst!=null?c.sst.toFixed(1)+"C":""}</desc></wpt>`).join("\n")+"\n"+
-  MAP.wps.map(w=>`<rte><name>BB Troll ${w.n}</name>${w.ends.map((e,k)=>`<rtept lat="${e[0].toFixed(5)}" lon="${e[1].toFixed(5)}"><name>T${w.n}${k?"B":"A"}</name></rtept>`).join("")}</rte>`).join("\n")+"\n</gpx>";}
+  MAP.wps.map(w=>`<rte><name>BB Troll ${w.n}</name>${w.course.map((e,k)=>`<rtept lat="${e[0].toFixed(5)}" lon="${e[1].toFixed(5)}"><name>T${w.n}-${k+1}</name></rtept>`).join("")}</rte>`).join("\n")+"\n</gpx>";}
 
 function mapUpdate(){if(!MAP.ready)return;MAP.score=scoreField(MAP.A,state.sp);MAP.scoreVer=(MAP.scoreVer||0)+1;let m=0;for(const v of MAP.score)if(v>m)m=v;MAP.scoreMax=m||1;
   MAP.wps=waypoints(MAP.A,MAP.score);MAP.sel=null;draw();wpCards();}
@@ -1076,7 +1130,7 @@ $("gps").onclick=gpsToggle;$("savechart").onclick=saveChartOffline;
   $("zreset").onclick=()=>{VIEW.z=1;redraw();};})();
 setInterval(()=>{if(MAP.target&&!$("tab-map").hidden)navUpdate();},5000);
 $("gpxbtn").onclick=()=>{const b=new Blob([gpx()],{type:"application/gpx+xml"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`bluewater-bite-${state.sp}-${new Date().toISOString().slice(0,10)}.gpx`;document.body.appendChild(a);a.click();a.remove();};
-$("copybtn").onclick=async()=>{const t=MAP.wps.map(w=>`WP${w.n} ${fmtLL(w.lat,w.lon)} | ${w.tag} | ${w.sst.toFixed(1)}C ${Math.round(w.depth)}m | troll ${Math.round(w.head)}/${Math.round((w.head+180)%360)} deg ${w.len.toFixed(1)}nm`).join("\n");
+$("copybtn").onclick=async()=>{const t=MAP.wps.map(w=>`WP${w.n} ${fmtLL(w.lat,w.lon)} | ${w.tag} | ${w.sst.toFixed(1)}C ${Math.round(w.depth)}m | troll ${w.len.toFixed(1)}nm zig-zag heading ${Math.round(w.head)}T from ${fmtLL(w.course[0][0],w.course[0][1])}`).join("\n");
   try{await navigator.clipboard.writeText(t);$("copybtn").textContent="Copied";}catch(e){$("probe").textContent=t;}setTimeout(()=>$("copybtn").textContent="Copy waypoints",1500);};
 window.addEventListener("resize",()=>{if(MAP.ready&&!$("tab-map").hidden)draw();});
 $("species").addEventListener("change",()=>{mapUpdate();learnPanel();});
