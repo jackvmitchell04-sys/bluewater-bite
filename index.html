@@ -1365,8 +1365,8 @@ function evalSpot(la,lo,r=1.5){const A=MAP.A,S=MAP.score,L=A.sst.length-1;let be
   return{s:best,pct,n:bk,la:latOf((bk-bk%NX)/NX),lo:lonOf(bk%NX),sst,inRange:sst>=sp.min&&sst<=sp.max,why,alert:al};}
 function nearReserve(la,lo,nm=.6){if(reserveAt(la,lo))return true;for(let k=0;k<8;k++){const a=k*45*RAD,d=nm/60;if(reserveAt(la+Math.cos(a)*d,lo+Math.sin(a)*d/Math.cos(la*RAD)))return true;}return false;}
 function suits(t){return Object.values(SPECIES).filter(x=>t>=x.min&&t<=x.max).map(x=>x.name).slice(0,3);}
-function windAt(la,lo){const W=MAP.A&&MAP.A.wind;if(!W)return null;const p=W.pts.map(q=>({q,d:hav(q.lat,q.lon,la,lo)})).sort((a,b)=>a.d-b.d)[0].q;
-  const today=new Date(Date.now()+nzOffsetMs(Date.now())).toISOString().slice(0,10),k=Math.max(0,(W.days||[]).indexOf(today)),w=p.wd&&p.wd[k]?p.wd[k]:[p.wu,p.wv];
+function windAt(la,lo,t=Date.now()){const W=MAP.A&&MAP.A.wind;if(!W)return null;const p=W.pts.map(q=>({q,d:hav(q.lat,q.lon,la,lo)})).sort((a,b)=>a.d-b.d)[0].q;
+  const today=new Date(t+nzOffsetMs(t)).toISOString().slice(0,10),k=Math.max(0,(W.days||[]).indexOf(today)),w=p.wd&&p.wd[k]?p.wd[k]:[p.wu,p.wv];
   const kn=Math.hypot(w[0],w[1])*1.944,from=(Math.atan2(-w[0],-w[1])/RAD+360)%360;return{kn,from};}
 function routeDepthOut(P,T,depth=100){const d=hav(P[0],P[1],T[0],T[1])/NM;for(let x=.5;x<d;x+=.5){const f=x/d,la=P[0]+(T[0]-P[0])*f,lo=P[1]+(T[1]-P[1])*f,c=conditionsAt(la,lo);if(c.dep>=depth)return x;}return null;}
 /* ---------- the day planner ----------
@@ -1375,11 +1375,11 @@ function routeDepthOut(P,T,depth=100){const d=hav(P[0],P[1],T[0],T[1])/NM;for(le
    while getting you back by your chosen time at your boat's speeds. Optional destination keeps it in that area. */
 let PSET={leave:"dawn",back:"sunset",cruise:20,troll:7};try{Object.assign(PSET,JSON.parse(localStorage.getItem("bwb-pset")||"{}"));}catch(e){}
 const savePset=()=>{try{localStorage.setItem("bwb-pset",JSON.stringify(PSET));}catch(e){}};
-function dayWindow(){const now=Date.now(),hNZ=+new Date(now).toLocaleString("en-NZ",{timeZone:NZTZ,hour:"numeric",hour12:false});
-  const tomorrow=PSET.leave==="dawn"&&hNZ>=10||hNZ>=17,day0=nzMidnightUtc(tomorrow?1:0),ev=solunar(day0,BOP.lat,BOP.lon);
+function dayWindow(offset=0,last=true){const now=Date.now(),hNZ=+new Date(now).toLocaleString("en-NZ",{timeZone:NZTZ,hour:"numeric",hour12:false});
+  const tomorrow=PSET.leave==="dawn"&&hNZ>=10||hNZ>=17,day0=nzMidnightUtc((tomorrow?1:0)+offset),ev=solunar(day0,BOP.lat,BOP.lon);
   const sr=(ev.find(e=>e.label==="Sunrise")||{t:day0+6*36e5}).t,ss=(ev.find(e=>e.label==="Sunset")||{t:day0+20*36e5}).t;
-  const leave=PSET.leave==="dawn"?sr-50*6e4:PSET.leave==="now"?Math.max(now+20*6e4,day0+4*36e5):day0+(+PSET.leave)*36e5;
-  const back=PSET.back==="sunset"?ss+20*6e4:day0+(+PSET.back)*36e5;
+  const leave=offset>0||PSET.leave==="dawn"?sr-50*6e4:PSET.leave==="now"?Math.max(now+20*6e4,day0+4*36e5):day0+(+PSET.leave)*36e5;
+  const back=!last?ss-10*6e4:PSET.back==="sunset"?ss+20*6e4:day0+(+PSET.back)*36e5;
   const bites=ev.filter(e=>e.type!=="Sun").map(e=>({a:e.t-e.dur*30e3,b:e.t+e.dur*30e3,type:e.type})).concat([{a:sr-45*6e4,b:sr+75*6e4,type:"Dawn"},{a:ss-90*6e4,b:ss+20*6e4,type:"Dusk"}]);
   return{day0,tomorrow,sr,ss,leave,back,bites};}
 function biteBonus(W,a,b){let f=1,tag=null;for(const x of W.bites){const ov=Math.min(b,x.b)-Math.max(a,x.a);if(ov>15*6e4){const k=x.type==="Major"?1.3:x.type==="Dawn"?1.3:x.type==="Dusk"?1.2:1.12;if(k>f){f=k;tag=x.type;}}}return{f,tag};}
@@ -1398,7 +1398,7 @@ function planCandidates(P,D,T,all){const out=[],seen=[];const sMax=MAP.scoreMax|
   return C;}
 function schedule(route,P,W){let t=W.leave,pos=P,dist=0;const legs=[];
   for(const c of route){const d=hav(pos[0],pos[1],c.la,c.lo)/NM;dist+=d;t+=d/PSET.cruise*36e5;const a=t;t+=c.fish*6e4;legs.push({c,arr:a,end:t,d});pos=[c.la2,c.lo2];dist+=c.w?c.w.len:0;}
-  const dh=hav(pos[0],pos[1],P[0],P[1])/NM;dist+=dh;const home=t+dh/PSET.cruise*36e5;return{legs,home,dist,dh,start:pos};}
+  const E=W.E||P,dh=hav(pos[0],pos[1],E[0],E[1])/NM;dist+=dh;const home=t+dh/PSET.cruise*36e5;return{legs,home,dist,dh,start:pos};}
 // value collected minus a running cost: every hour under way at cruise costs about a fifth of a good stop
 function routeValue(route,P,W){const S=schedule(route,P,W);let v=0,run=0;for(const L of S.legs){const b=biteBonus(W,L.arr,L.end);L.bite=b.tag;v+=L.c.v*b.f*Math.sqrt(L.c.fish/50);run+=L.d;}
   run+=S.dh;v-=.12*run/PSET.cruise;return{v,S};}
@@ -1413,53 +1413,95 @@ function optimise(C,P,W,forced){let route=forced?[forced]:[];const ok=r=>schedul
     let improved=true;while(improved){improved=false;const cur=routeValue(route,P,W);for(let i=0;i<route.length-1;i++)for(let j=i+1;j<route.length;j++){
       const r=route.slice(0,i).concat(route.slice(i,j+1).reverse(),route.slice(j+1));if(!ok(r))continue;const rv=routeValue(r,P,W);
       if(rv.v>cur.v+1e-6||(rv.v>=cur.v-1e-6&&rv.S.home<cur.S.home-6e4)){route=r;improved=true;break;}}}}
-  // spare time: stay longer at the best stop that overlaps a bite period (up to 2 extra hours)
-  let slack=(W.back-schedule(route,P,W).home)/6e4;if(slack>30&&route.length){const S=routeValue(route,P,W).S;
-    const pick=S.legs.map(L=>({L,f:biteBonus(W,L.arr,L.end+Math.min(120,slack)*6e4).f*L.c.v})).sort((a,b)=>b.f-a.f)[0].L.c;
-    const extra=Math.min(120,slack-15);if(extra>15){route=route.map(c=>c===pick?Object.assign(Object.create(Object.getPrototypeOf(c)),c,{fish:c.fish+extra,extra}):c);}}
+  // spare time: stay longer at the best stops, favouring ones that line up with a bite period (up to 3 extra hours each)
+  for(let pass=0;pass<3;pass++){const slack=(W.back-schedule(route,P,W).home)/6e4-20;if(slack<20||!route.length)break;const S=routeValue(route,P,W).S;
+    const ranked=S.legs.filter(L=>!(L.c.extra>=180)).map(L=>({L,f:biteBonus(W,L.arr,L.end+Math.min(180,slack)*6e4).f*L.c.v})).sort((a,b)=>b.f-a.f);if(!ranked.length)break;
+    const pick=ranked[0].L.c,extra=Math.min(180-(pick.extra||0),slack);
+    route=route.map(c=>c===pick?Object.assign(Object.create(Object.getPrototypeOf(c)),c,{fish:c.fish+extra,extra:(c.extra||0)+extra}):c);}
   return route;}
-async function makePlan(text){const out=$("planout");out.innerHTML=`<div class="mkhint">Reading today's water and planning your day...</div>`;
-  if(!MAP.ready){if(!MAP.loading)loadMap();await new Promise(r=>{const t=setInterval(()=>{if(MAP.ready){clearInterval(t);r();}},300);});}
-  resMask();text=(text||"").trim();const q=text?parsePlace(text):{dest:null,alts:[],from:null},kw=q.dest?q.dest.keys.filter(k=>k.length>=4&&!GENERIC.has(k)):[];
+const ANCHORS=[["Mayor Island",-37.285,176.254,2.1],["Motiti Island",-37.635,176.42,1.3],["Slipper Island",-37.05,175.94,.8],["Alderman Islands",-36.965,176.08,1.0],
+ ["Mercury Islands",-36.62,175.86,1.2],["Whale Island (Moutohorā)",-37.86,176.97,.7],["Great Barrier (Port Fitzroy)",-36.16,175.36,0]];
+/* overnight: anchor on the side of the island away from tonight's wind */
+function anchorFor(near,t){const A=ANCHORS.map(a=>({a,d:hav(a[1],a[2],near[0],near[1])})).sort((x,y)=>x.d-y.d)[0].a,w=windAt(A[1],A[2],t);
+  const lee=w?(w.from+180)%360:180,d=(A[3]+.4)/60,pt=A[3]?[A[1]+Math.cos(lee*RAD)*d,A[2]+Math.sin(lee*RAD)*d/Math.cos(A[1]*RAD)]:[A[1],A[2]];
+  return{name:A[0],pt,w,side:comp16(lee)};}
+const tmF=t=>nzTime(t).replace(/\s/g,"").toLowerCase(),legF=(a,b)=>`${(hav(a[0],a[1],b[0],b[1])/NM).toFixed(1)} nm on ${p3(brg(a[0],a[1],b[0],b[1]))}°T`;
+const dayLblF=W=>new Date(W.day0+43200e3).toLocaleDateString("en-NZ",{timeZone:NZTZ,weekday:"short",day:"numeric",month:"short"});
+function reasonF(e){return`${e.sst.toFixed(1)}°C${e.inRange?"":` (${e.sst<SPECIES[state.sp].min?"cool":"warm"} for ${SPECIES[state.sp].name.toLowerCase()}${suits(e.sst).length?`; suits ${suits(e.sst).slice(0,2).join(", ")}`:""})`}${e.why.length?", "+e.why.slice(0,2).join(" and "):""}${e.alert?". Flagged in this morning's scan":""}`;}
+function dayItems(route,S,W,P,startLbl,endLbl,first){const items=[],L0=S.legs[0];
+  items.push(`<b>${tmF(W.leave)}</b> ${first?"Leave":"Up anchor at"} ${startLbl}, ${legF(P,[L0.c.la,L0.c.lo])} to your first stop.`);
+  const lo=routeDepthOut(P,[L0.c.la,L0.c.lo]);if(lo!=null&&lo<L0.d-1&&lo>.5)items.push(`<b>${tmF(W.leave+lo/PSET.cruise*36e5)}</b> Lures out as you cross the 100 m line (${lo.toFixed(0)} nm out).`);
+  let prev=P;S.legs.forEach((L,k)=>{const c=L.c,bite=L.bite?` <span class="prime">${L.bite==="Dawn"?"dawn bite":L.bite==="Dusk"?"evening bite":L.bite+" bite period"}</span>`:"";
+    const how=(c.extra?`spend about ${(c.fish/60).toFixed(1).replace(/\.0$/,"")} h here, `:"")+(c.w?`troll the ${c.w.len.toFixed(1)} nm zig-zag course${c.extra?" and repeat it":""} (start ${fmtLL(c.la,c.lo)}, heading ${p3(c.w.head)}°T${c.w.warm?`, warm water to ${c.w.warm}`:""})`:`troll over and around it${c.ap?" (approximate position)":""}`);
+    items.push(`<b>${tmF(L.arr)} to ${tmF(L.end)}</b> <b class="stop">${c.n}</b>${k?` (${legF(prev,[c.la,c.lo])})`:""}: ${how}. ${reasonF(c.e)}.${bite}`);prev=[c.la2,c.lo2];});
+  items.push(`<b>${tmF(S.home-S.dh/PSET.cruise*36e5)}</b> Lines up, ${legF(prev,W.E||P)} to ${endLbl}; there about <b>${tmF(S.home)}</b>.`);return items;}
+function planButtons(name){const out=$("planout");
+  $("planmap").onclick=()=>{document.querySelector('.tab[data-t="map"]').click();const la=MAP.plan.pts.map(p=>p[0]),lo=MAP.plan.pts.map(p=>p[1]);
+    VIEW.clat=(Math.min(...la)+Math.max(...la))/2;VIEW.clon=(Math.min(...lo)+Math.max(...lo))/2;VIEW.z=Math.max(1,Math.min(12,.9*Math.min((AREA.lon1-AREA.lon0)/(Math.max(...lo)-Math.min(...lo)+.04),(AREA.lat1-AREA.lat0)/(Math.max(...la)-Math.min(...la)+.04))));redraw();$("mapcv").scrollIntoView({behavior:"smooth"});};
+  $("plannav").onclick=()=>{const p=MAP.plan.pts.find((q,k)=>k&&q[2])||MAP.plan.pts[1];setTarget(p[2]||"Plan",p[0],p[1]);$("planmap").click();};
+  $("plangpx").onclick=()=>{const x=`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Bluewater Bite NZ" xmlns="http://www.topografix.com/GPX/1/1"><rte><name>${name.replace(/[<&>]/g,"")}</name>${MAP.plan.pts.map((p,k)=>`<rtept lat="${p[0].toFixed(5)}" lon="${p[1].toFixed(5)}"><name>${k}${p[2]?". "+p[2].replace(/[<&>]/g,""):""}</name></rtept>`).join("")}</rte></gpx>`;
+    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([x],{type:"application/gpx+xml"}));a.download="bluewater-plan.gpx";document.body.appendChild(a);a.click();a.remove();};}
+async function ensureMap(){if(!MAP.ready){if(!MAP.loading)loadMap();await new Promise(r=>{const t=setInterval(()=>{if(MAP.ready){clearInterval(t);r();}},300);});}resMask();}
+async function makePlan(text){const out=$("planout");out.innerHTML=`<div class="mkhint">Reading today's water and planning your trip...</div>`;await ensureMap();
+  text=(text||"").trim();const q=text?parsePlace(text):{dest:null,alts:[],from:null},kw=q.dest?q.dest.keys.filter(k=>k.length>=4&&!GENERIC.has(k)):[];
   if(text&&!q.dest&&!/^(anywhere|best|wherever|you pick|surprise|auto)/i.test(text)){out.innerHTML=`<div class="why">I couldn't match a place in "${text.replace(/[<>&]/g,"")}". Try an island or mark name (<i>Mayor</i>, <i>Motiti</i>, <i>the Rangas</i>, <i>White Island</i>), or leave it blank and I'll pick the best area.</div>`;return;}
-  const fromN=q.from||HOMEPORT,port=PORTS.find(p=>p[0]===fromN)||PORTS.find(p=>p[0]==="Tauranga"),P=[port[1],port[2]],exit=PORT_EXIT[port[0]]||port[0],D=q.dest,W=dayWindow();
-  // the destination's own target (named mark, or best mark/waypoint around the named area)
-  let T=null;if(D){const named=c=>kw.some(k=>(c.mark||c.n).toLowerCase().includes(k));
-    const C0=planCandidates(P,null,null,true).filter(c=>hav(D.la,D.lo,c.la,c.lo)/NM<=10||(D.kind==="area"&&named(c)&&hav(D.la,D.lo,c.la,c.lo)/NM<=18));
+  // departure: a port, or an island anchorage ("from Mayor Island" when you wake up on the anchor)
+  let P,startLbl,homeP,homeLbl;const fromArea=/(from|leaving|off)\s+(the\s+)?([a-zāēīōū ]+)/i.exec(text),fa=fromArea?ANCHORS.find(a=>fromArea[3].toLowerCase().includes(a[0].split(" ")[0].toLowerCase())):null;
+  const port=PORTS.find(p=>p[0]===(q.from||HOMEPORT))||PORTS.find(p=>p[0]==="Tauranga");homeP=[port[1],port[2]];homeLbl=PORT_EXIT[port[0]]||port[0];
+  if(fa&&!q.from){P=[fa[1],fa[2]];startLbl=`the anchorage at ${fa[0]}`;}else{P=homeP;startLbl=homeLbl;}
+  let D=q.dest;if(D&&fa&&D.n.toLowerCase().includes(fa[0].split(" ")[0].toLowerCase())&&!/(to|toward|towards|heading)/i.test(text.split(/from|leaving/i)[0]||""))D=null;
+  const nDays=+(PSET.trip||1),used=new Set(),days=[];let start=P,sLbl=startLbl,T=null;
+  if(D){const named=c=>kw.some(k=>(c.mark||c.n).toLowerCase().includes(k));
+    const C0=planCandidates(start,null,null,true).filter(c=>hav(D.la,D.lo,c.la,c.lo)/NM<=10||(D.kind==="area"&&named(c)&&hav(D.la,D.lo,c.la,c.lo)/NM<=18));
     if(D.kind==="mark"){T=C0.find(c=>(c.mark||c.n)===D.n)||C0.find(c=>hav(c.la,c.lo,D.la,D.lo)/NM<1.6);
       if(!T){const e=evalSpot(D.la,D.lo);if(e)T={n:D.n,la:D.la,lo:D.lo,la2:D.la,lo2:D.lo,fish:50,e,v:Math.pow(e.s/(MAP.scoreMax||1),2)};}}
     else T=C0.sort((a,b)=>b.v*(named(b)?1.25:1)-a.v*(named(a)?1.25:1))[0];
     if(!T){const e=evalSpot(D.la,D.lo,4);if(e)T={n:`the water off ${D.n}`,la:e.la,lo:e.lo,la2:e.la,lo2:e.lo,fish:45,e,v:Math.pow(e.s/(MAP.scoreMax||1),2)};}}
-  let C=planCandidates(P,D,T);if(T){C=C.filter(c=>hav(c.la,c.lo,T.la,T.lo)/NM>1.2);C.push(T);}
-  const route=optimise(C,P,W,T);const R=routeValue(route,P,W),S=R.S;
-  if(!route.length){out.innerHTML=`<div class="why">There isn't enough time between your leave and back-by times to reach good water. Try leaving earlier or coming back later.</div>`;return;}
-  const tm=t=>nzTime(t).replace(/\s/g,"").toLowerCase(),leg=(a,b)=>`${(hav(a[0],a[1],b[0],b[1])/NM).toFixed(1)} nm on ${p3(brg(a[0],a[1],b[0],b[1]))}°T`;
-  const reason=e=>`${e.sst.toFixed(1)}°C${e.inRange?"":` (${e.sst<SPECIES[state.sp].min?"cool":"warm"} for ${SPECIES[state.sp].name.toLowerCase()}${suits(e.sst).length?`; suits ${suits(e.sst).slice(0,2).join(", ")}`:""})`}${e.why.length?", "+e.why.slice(0,2).join(" and "):""}${e.alert?". Flagged in this morning's scan":""}`;
-  const first=S.legs[0],lureOut=routeDepthOut(P,[first.c.la,first.c.lo]),items=[];
-  items.push(`<b>${tm(W.leave)}</b> Leave ${exit}, ${leg(P,[first.c.la,first.c.lo])} to your first stop.`);
-  if(lureOut!=null&&lureOut<first.d-1)items.push(`<b>${tm(W.leave+lureOut/PSET.cruise*36e5)}</b> Lures out as you cross the 100 m line (${lureOut.toFixed(0)} nm out); troll from here if you've got time.`);
-  let prev=P;S.legs.forEach((L,k)=>{const c=L.c,bite=L.bite?` <span class="prime">${L.bite==="Dawn"?"dawn bite":L.bite==="Dusk"?"evening bite":L.bite+" bite period"}</span>`:"";
-    const how=(c.extra?`stay a while (best water and bite timing of the day), `:"")+(c.w?`troll the ${c.w.len.toFixed(1)} nm zig-zag course${c.extra?" and repeat it":""}`:"")+(c.w?``:``)+(c.w?` (start ${fmtLL(c.la,c.lo)}, heading ${p3(c.w.head)}°T${c.w.warm?`, warm water to ${c.w.warm}`:""})`:`troll over and around it${c.ap?" (approximate position)":""}`);
-    items.push(`<b>${tm(L.arr)} to ${tm(L.end)}</b> <b class="stop">${c.n}</b>${k?` (${leg(prev,[c.la,c.lo])})`:""}: ${how}. ${reason(c.e)}.${bite}`);prev=[c.la2,c.lo2];});
-  items.push(`<b>${tm(S.home-S.dh/PSET.cruise*36e5)}</b> Lines up and head home, ${leg(prev,P)}; back at ${exit} about <b>${tm(S.home)}</b>.`);
-  const top=MAP.wps[0],inPlan=route.some(c=>c.w===top);let heads="";
-  if(D&&top&&!inPlan){const ev=evalSpot(top.lat,top.lon,1);if(ev&&T&&ev.s>T.e.s*1.25)heads=`Heads up: the best water on the map today is <b>WP1</b>, ${leg(P,[top.lat,top.lon])} from ${port[0]} (${top.tag.toLowerCase()}). Leave the destination blank and I'll plan around it.`;}
-  const res=[...new Set(route.flatMap(c=>RESERVES.filter(r=>hav(c.la,c.lo,(r.bb[1]+r.bb[3])/2,(r.bb[0]+r.bb[2])/2)/NM<6).map(r=>r.short)))];
-  const w=windAt(route[0].la,route[0].lo),b=typeof baroAt==="function"?baroAt(W.leave):null;
-  let tide="";if(TIDES){const tp=TIDES.ports.map(x=>({x,d:hav(x.lat,x.lon,P[0],P[1])})).sort((a,b)=>a.d-b.d)[0].x,ev=(tp.ev||[]).filter(e=>e.t>W.leave-3*36e5&&e.t<S.home+36e5);if(ev.length)tide=`Tides at ${tp.name.replace("Whakatane","Whakatāne")}: ${ev.map(e=>`${e.type==="H"?"high":"low"} ${tm(e.t)}`).join(", ")}.`;}
+  for(let d=0;d<nDays;d++){const last=d===nDays-1,W=dayWindow(d,last),forced=d===0?T:null;
+    let C=planCandidates(start,d===0?D:null,d===0?T:null).filter(c=>!used.has(c.n));if(forced){C=C.filter(c=>hav(c.la,c.lo,forced.la,forced.lo)/NM>1.2);C.push(forced);}
+    let anchor=null;
+    if(last){W.E=homeP;}
+    else{W.E=start;let r0=optimise(C,start,W,forced);const tail=r0.length?[r0[r0.length-1].la2,r0[r0.length-1].lo2]:forced?[forced.la,forced.lo]:start;
+      anchor=anchorFor(tail,W.ss+3*36e5);W.E=anchor.pt;}
+    const route=optimise(C,start,W,forced);if(!route.length){out.innerHTML=`<div class="why">There isn't enough time on day ${d+1} between leaving and getting ${last?"home":"to the anchorage"} to reach good water. Try leaving earlier or coming back later.</div>`;return;}
+    const R=routeValue(route,start,W);route.forEach(c=>used.add(c.n));days.push({W,route,S:R.S,start,sLbl,anchor,last});
+    if(anchor){start=anchor.pt;sLbl=`the anchorage (lee of ${anchor.name})`;}}
+  let html="",pts=[],tot=0;
+  days.forEach((dd,k)=>{const endLbl=dd.last?homeLbl:`the anchorage on the ${dd.anchor.side} side of ${dd.anchor.name}`;
+    const items=dayItems(dd.route,dd.S,dd.W,dd.start,dd.k===0&&startLbl===homeLbl?homeLbl:dd.sLbl,endLbl,k===0&&dd.sLbl===homeLbl);tot+=dd.S.dist;
+    html+=`<div class="why" style="margin-top:8px"><b>${nDays>1?`Day ${k+1} · `:""}${dayLblF(dd.W)}${k===0&&D?`, toward ${D.n}`:k===0&&!D?", best water within reach":""}</b> · ${dd.route.length} stops · ${dd.S.dist.toFixed(0)} nm</div><ol class="plan">${items.map(s=>`<li>${s}</li>`).join("")}</ol>`;
+    if(dd.anchor){const w=dd.anchor.w;html+=`<div class="why">🌙 <b>Overnight:</b> anchor in the lee of ${dd.anchor.name}, on the ${dd.anchor.side} side${w?` (wind ${Math.round(w.kn)} kn from the ${comp16(w.from)} that day, ECMWF)`:""}. Check the overnight forecast and local knowledge before choosing your bay. In the morning, plan again with "from ${dd.anchor.name.split(" (")[0]}" for fresh satellite data.</div>`;}
+    pts.push(...(k===0?[[dd.start[0],dd.start[1],k===0?"Start":""]]:[]),...dd.route.flatMap(c=>c.w?[[c.la,c.lo,c.n],[c.la2,c.lo2,""]]:[[c.la,c.lo,c.n]]),[dd.W.E[0],dd.W.E[1],dd.last?"":`Anchor ${dd.anchor.name}`]);});
+  const top=MAP.wps[0];let heads="";if(D&&top&&!days.some(dd=>dd.route.some(c=>c.w===top))){const ev=evalSpot(top.lat,top.lon,1);if(ev&&T&&ev.s>T.e.s*1.25)heads=`<div class="why">Heads up: the best water on the map today is <b>WP1</b>, ${legF(P,[top.lat,top.lon])} from your start (${top.tag.toLowerCase()}). Leave the destination blank and I'll plan around it.</div>`;}
+  const res=[...new Set(days.flatMap(dd=>dd.route.flatMap(c=>RESERVES.filter(r=>hav(c.la,c.lo,(r.bb[1]+r.bb[3])/2,(r.bb[0]+r.bb[2])/2)/NM<6).map(r=>r.short))))];
+  const W1=days[0].W,w=windAt(days[0].route[0].la,days[0].route[0].lo,W1.leave),b=typeof baroAt==="function"?baroAt(W1.leave):null;
+  let tide="";if(TIDES){const tp=TIDES.ports.map(x=>({x,d:hav(x.lat,x.lon,P[0],P[1])})).sort((a,b)=>a.d-b.d)[0].x,ev=(tp.ev||[]).filter(e=>e.t>W1.leave-3*36e5&&e.t<days[0].S.home+36e5);if(ev.length)tide=`Tides at ${tp.name.replace("Whakatane","Whakatāne")}: ${ev.map(e=>`${e.type==="H"?"high":"low"} ${tmF(e.t)}`).join(", ")}.`;}
   const cond=[w?`Wind ${Math.round(w.kn)} kn from the ${comp16(w.from)} (ECMWF, daily mean).`:"",tide,b?`Barometer ${Math.round(b.p)} hPa, ${b.trend}.`:"",res.length?`⛔ No fishing inside ${res.join(", ")}.`:""].filter(Boolean).join(" ");
-  MAP.plan={pts:[[P[0],P[1],port[0]],...route.flatMap(c=>c.w?[[c.la,c.lo,c.n],[c.la2,c.lo2,""]]:[[c.la,c.lo,c.n]]),[P[0],P[1],""]]};
-  const dayLbl=W.tomorrow?`tomorrow (${new Date(W.day0+43200e3).toLocaleDateString("en-NZ",{timeZone:NZTZ,weekday:"short",day:"numeric",month:"short"})})`:"today";
-  out.innerHTML=`<div class="why" style="margin-top:8px"><b>Plan for ${dayLbl}${D?`, toward ${D.n}`:", best water within reach"}</b> · ${route.length} stops · ${S.dist.toFixed(0)} nm · back ${tm(S.home)}</div>
-    <ol class="plan">${items.map(s=>`<li>${s}</li>`).join("")}</ol>${heads?`<div class="why">${heads}</div>`:""}<div class="next" style="margin-top:6px">${cond}</div>
-    <div class="srcm">Stops chosen from ${C.length} marks and hotspot waypoints, scored for ${SPECIES[state.sp].name} on satellite data for ${MAP.A.times[MAP.A.times.length-1]}; cruising ${PSET.cruise} kn, trolling ${PSET.troll} kn.${q.alts.length?` Also matched: ${q.alts.join(", ")}.`:""}</div>
+  MAP.plan={pts};
+  out.innerHTML=`<div class="srcm" style="margin-top:6px">${nDays>1?`${nDays}-day trip · ${tot.toFixed(0)} nm total`:`${tot.toFixed(0)} nm`}${nDays>1?" · days after the first use today's satellite picture, so replan each morning":""}</div>${html}${heads}<div class="next" style="margin-top:6px">${cond}</div>
+    <div class="srcm">Stops chosen from marks and hotspot waypoints, scored for ${SPECIES[state.sp].name} on satellite data for ${MAP.A.times[MAP.A.times.length-1]}; cruising ${PSET.cruise} kn, trolling ${PSET.troll} kn.${q.alts.length?` Also matched: ${q.alts.join(", ")}.`:""}</div>
     <div class="actions"><button class="btn pri" id="planmap">Show on map</button><button class="btn" id="plannav">Navigate to first stop</button><button class="btn" id="plangpx">Download route (GPX)</button></div>`;
-  $("planmap").onclick=()=>{document.querySelector('.tab[data-t="map"]').click();const la=MAP.plan.pts.map(p=>p[0]),lo=MAP.plan.pts.map(p=>p[1]);
-    VIEW.clat=(Math.min(...la)+Math.max(...la))/2;VIEW.clon=(Math.min(...lo)+Math.max(...lo))/2;VIEW.z=Math.max(1,Math.min(8,.9*Math.min((AREA.lon1-AREA.lon0)/(Math.max(...lo)-Math.min(...lo)+.08),(AREA.lat1-AREA.lat0)/(Math.max(...la)-Math.min(...la)+.08))));redraw();$("mapcv").scrollIntoView({behavior:"smooth"});};
-  $("plannav").onclick=()=>{const p=MAP.plan.pts[1];setTarget(p[2],p[0],p[1]);$("planmap").click();};
-  $("plangpx").onclick=()=>{const x=`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Bluewater Bite NZ" xmlns="http://www.topografix.com/GPX/1/1"><rte><name>Plan ${D?D.n:"best water"}</name>${MAP.plan.pts.map((p,k)=>`<rtept lat="${p[0].toFixed(5)}" lon="${p[1].toFixed(5)}"><name>${k}${p[2]?". "+p[2].replace(/[<&>]/g,""):""}</name></rtept>`).join("")}</rte></gpx>`;
-    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([x],{type:"application/gpx+xml"}));a.download="bluewater-plan.gpx";document.body.appendChild(a);a.click();a.remove();};
-  try{localStorage.setItem("bwb-lastplan",text);}catch(e){}if(MAP.ready)redraw();}
+  planButtons(`Plan ${D?D.n:"best water"}`);try{localStorage.setItem("bwb-lastplan",text);}catch(e){}if(MAP.ready)redraw();}
+/* found sign: work this spot for the rest of the day */
+async function stayHere(){const out=$("planout");await ensureMap();const pos=catchPos();
+  if(!pos){out.innerHTML=`<div class="why">Where's the sign? Turn on ◎ for GPS, or tap the spot on the map, then press <b>Found sign: stay here</b> again.</div>`;document.querySelector('.tab[data-t="map"]').click();return;}
+  const A=MAP.A,{la,lo}=pos,now=Date.now(),W=dayWindow(0,true),c=conditionsAt(la,lo),e=evalSpot(la,lo,1)||{why:[],sst:c.sst||0,inRange:true};
+  const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res),n=ix(i,j),onFront=A.frontDist[n]<4,mode=onFront?"front":"depth";
+  let line=traceLine(A,la,lo,mode,1.2*NM);if(lineLen(line)<1)line=[[la,lo],[la+.012,lo]];let info=courseInfo(A,line,mode);if(info.along!=null&&info.along>0){line=line.reverse();info=courseInfo(A,line,mode);}
+  const course=zigzag(A,line,mode),len=lineLen(course)/NM;
+  const port=PORTS.find(p=>p[0]===HOMEPORT)||PORTS[4],home=[port[1],port[2]],dh=hav(la,lo,home[0],home[1])/NM,leaveBy=W.back-dh/PSET.cruise*36e5;
+  const ev=solunar(nzMidnightUtc(0),BOP.lat,BOP.lon).filter(x=>x.type!=="Sun").map(x=>({a:x.t-x.dur*30e3,b:x.t+x.dur*30e3,type:x.type})).filter(x=>x.b>now&&x.a<leaveBy);
+  const ss=W.ss,eveA=ss-90*6e4;const cand=planCandidates(home,null,null,true).filter(x=>{const d=hav(x.la,x.lo,la,lo)/NM;return d>1.2&&d<=6;}).sort((a,b)=>b.v-a.v).slice(0,2);
+  const items=[`<b>Now</b> Work the sign: ${len.toFixed(1)} nm zig-zag ${onFront?"along the temperature break":"along the depth contour"} through your position, heading ${p3(info.h)}°T${info.along!=null&&info.along<-.05?` into a ${Math.abs(info.along).toFixed(1)} kn current`:""}${info.warm?`, warm water to ${info.warm}`:""}. Turn and repeat it, keeping the sign inside the pattern. About ${Math.round(len/PSET.troll*60)} min per pass at ${PSET.troll} kn.`,
+    `Here: ${c.sst!=null?c.sst.toFixed(1)+"°C":"n/a"}${c.dep!=null?`, ${Math.round(c.dep)} m deep`:""}${c.front!=null?`, nearest break ${c.front<1?"right here":c.front.toFixed(1)+" km away"}`:""}${A.convN&&A.convN[n]>.4?", currents converging":""}${e.why&&e.why.filter(x=>!/temperature break/.test(x)).length?`; ${e.why.filter(x=>!/temperature break/.test(x))[0]}`:""}.`,
+    ev.length?`Bite periods still to come: ${ev.map(x=>`<b>${x.type}</b> ${tmF(Math.max(x.a,now))} to ${tmF(x.b)}`).join(", ")}${ss-90*6e4<leaveBy?`, and the evening bite from ${tmF(eveA)}`:""}. Be on the sign for these.`:`No more bite periods before you need to leave${eveA<leaveBy?`, apart from the evening bite from ${tmF(eveA)}`:""}.`,
+    cand.length?`If it goes quiet for an hour: ${cand.map(x=>`<b>${x.n}</b> ${legF([la,lo],[x.la,x.lo])} (${reasonF(x.e)})`).join("; or ")}.`:"",
+    `Leave by <b>${tmF(leaveBy)}</b> to be back at ${PORT_EXIT[port[0]]||port[0]} by ${tmF(W.back)} (${dh.toFixed(0)} nm at ${PSET.cruise} kn).`,
+    `Log every hook-up with 🎣 Fish on: it records the water here and teaches the map what your sign looks like.`].filter(Boolean);
+  MAP.plan={pts:course.map((p,k)=>[p[0],p[1],k?"":"Sign"])};MAP.target={n:"Sign",la,lo};
+  out.innerHTML=`<div class="why" style="margin-top:8px"><b>Staying on the sign</b> at ${fmtLL(la,lo)} (${pos.how})</div><ol class="plan">${items.map(s=>`<li>${s}</li>`).join("")}</ol>
+    <div class="actions"><button class="btn pri" id="planmap">Show on map</button><button class="btn" id="plannav">Navigate to the sign</button><button class="btn" id="plangpx">Download pattern (GPX)</button></div>`;
+  planButtons("Sign pattern");redraw();}
 function drawPlan(g,X,Y){const P=MAP.plan;if(!P)return;g.setLineDash([9,5]);g.strokeStyle="#ffb547";g.lineWidth=3;g.beginPath();P.pts.forEach((p,k)=>k?g.lineTo(X(p[1]),Y(p[0])):g.moveTo(X(p[1]),Y(p[0])));g.stroke();g.setLineDash([]);
   for(let k=1;k<P.pts.length;k++){const x0=X(P.pts[k-1][1]),y0=Y(P.pts[k-1][0]),x1=X(P.pts[k][1]),y1=Y(P.pts[k][0]);if(Math.hypot(x1-x0,y1-y0)<40)continue;
     const r=Math.atan2(x1-x0,-(y1-y0)),x=(x0+x1)/2,y=(y0+y1)/2;g.beginPath();g.moveTo(x+Math.sin(r)*8,y-Math.cos(r)*8);g.lineTo(x+Math.sin(r+2.5)*7,y-Math.cos(r+2.5)*7);g.lineTo(x+Math.sin(r-2.5)*7,y-Math.cos(r-2.5)*7);g.closePath();g.fillStyle="#ffb547";g.fill();g.strokeStyle="#3a2400";g.lineWidth=1.2;g.stroke();}
@@ -1468,15 +1510,16 @@ function renderPlanBox(){const h=+new Date().toLocaleString("en-NZ",{timeZone:NZ
   $("planbox").innerHTML=`<div class="planhead"><b>${greet}, skipper <span id="skname" title="Change name">${SKIPPER}</span>.</b> Where are you heading today?</div>
     <div class="planrow"><input id="plantext" placeholder="e.g. heading towards Mayor, the Rangas from Whakatāne, or leave blank and I'll pick" value="${(localStorage.getItem("bwb-lastplan")||"").replace(/"/g,"&quot;")}"><button class="btn pri" id="plango">Plan my day</button></div>
     <div class="chips" id="planchips">${["Mayor Island","Motiti","The Rangas","White Island","Alderman Islands","Mercury Islands"].map(c=>`<span class="chip pc">${c}</span>`).join("")}
-<span class="chip pc">You pick</span></div>
+<span class="chip pc">You pick</span><span class="chip" id="staysign" style="cursor:pointer;border-color:#ff5f45;color:#ffb3a3">🎯 Found sign: stay here</span></div>
     <div class="planset">From <select id="homeport">${PORTS.map(p=>`<option ${p[0]===HOMEPORT?"selected":""}>${p[0]}</option>`).join("")}</select>
       Leave <select id="psleave">${[["dawn","Before dawn"],["now","Now"],...[4,5,6,7,8,9,10].map(h=>[h,`${h}am`])].map(([v,l])=>`<option value="${v}" ${String(PSET.leave)===String(v)?"selected":""}>${l}</option>`).join("")}</select>
       Back by <select id="psback">${[["sunset","Sunset"],...[12,13,14,15,16,17,18].map(h=>[h,`${h>12?h-12:h}pm`])].map(([v,l])=>`<option value="${v}" ${String(PSET.back)===String(v)?"selected":""}>${l}</option>`).join("")}</select>
+      Trip <select id="pstrip">${[[1,"Day trip"],[2,"Overnight (2 days)"],[3,"2 nights (3 days)"]].map(([v,l])=>`<option value="${v}" ${+(PSET.trip||1)===v?"selected":""}>${l}</option>`).join("")}</select>
       Cruise <input id="pscruise" type="number" min="5" max="45" value="${PSET.cruise}"> kn · Troll <input id="pstroll" type="number" min="3" max="12" value="${PSET.troll}"> kn</div>
     <div id="planout"></div>`;
   $("plango").onclick=()=>makePlan($("plantext").value);$("plantext").onkeydown=e=>{if(e.key==="Enter")makePlan($("plantext").value);};
   document.querySelectorAll(".pc").forEach(c=>c.onclick=()=>{$("plantext").value=c.textContent==="You pick"?"":`Heading to ${c.textContent}`;makePlan($("plantext").value);});
-  $("psleave").onchange=e=>{PSET.leave=e.target.value;savePset();};$("psback").onchange=e=>{PSET.back=e.target.value;savePset();};
+  $("psleave").onchange=e=>{PSET.leave=e.target.value;savePset();};$("pstrip").onchange=e=>{PSET.trip=+e.target.value;savePset();};$("staysign").onclick=stayHere;$("psback").onchange=e=>{PSET.back=e.target.value;savePset();};
   $("pscruise").onchange=e=>{PSET.cruise=Math.max(5,+e.target.value||20);savePset();};$("pstroll").onchange=e=>{PSET.troll=Math.max(3,+e.target.value||7);savePset();};
   $("homeport").onchange=e=>{HOMEPORT=e.target.value;try{localStorage.setItem("bwb-home",HOMEPORT);}catch(x){}};
   $("skname").onclick=()=>{const n=prompt("Skipper's name?",SKIPPER);if(n){SKIPPER=n.trim();try{localStorage.setItem("bwb-skipper",SKIPPER);}catch(x){}renderPlanBox();}};}
