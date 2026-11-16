@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install xarray netCDF4 siphon numpy requests pillow tifffile imagecodecs
-      - run: timeout 15m python scripts/fetch_data.py himawari ocean alerts || echo "ended early"
+      - run: timeout 15m python scripts/fetch_data.py himawari ocean alerts truecolour || echo "ended early"
       - name: Save
         if: always()
         run: |

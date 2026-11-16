@@ -978,12 +978,83 @@ def dumping():
         json.dump({"source": "LINZ nautical chart dumping grounds (S-57 DMPGRD)", "items": items}, f, separators=(",", ":"))
 
 
+# ---------------------------------------------------------------- true colour: clearest recent VIIRS photo
+TC_SATS = ("NOAA21", "NOAA20", "SNPP")
+
+
+def _box(a, r):
+    """mean over a (2r+1)^2 box, numpy only"""
+    p = np.pad(a, r, mode="edge").cumsum(0).cumsum(1); p = np.pad(p, ((1, 0), (1, 0)))
+    k = 2 * r + 1
+    return (p[k:, k:] - p[:-k, k:] - p[k:, :-k] + p[:-k, :-k]) / (k * k)
+
+
+def truecolour():
+    """NASA GIBS VIIRS corrected-reflectance tiles (plate carree, so they line up with the map) for the last 3 days
+    from all three VIIRS satellites. Each pixel is scored for cloud/glare; the newest day wins wherever it is clear,
+    and within a day the clearest satellite is used. Older days only fill what the newest day has under cloud."""
+    import requests, io
+    from PIL import Image
+    z, res = 8, 0.5625 / 2 ** 8                       # level 8: 0.0022 deg per pixel (~240 m), VIIRS native 375 m
+    span = 512 * res
+    c0, c1 = int((BOX["lon0"] + 180) // span), int((BOX["lon1"] + 180) // span)
+    r0, r1 = int((90 - BOX["lat1"]) // span), int((90 - BOX["lat0"]) // span)
+    W, H = (c1 - c0 + 1) * 512, (r1 - r0 + 1) * 512
+    x0, y0 = int(round((BOX["lon0"] + 180 - c0 * span) / res)), int(round((90 - BOX["lat1"] - r0 * span) / res))
+    w, h = int(round((BOX["lon1"] - BOX["lon0"]) / res)), int(round((BOX["lat1"] - BOX["lat0"]) / res))
+    nz_today = (dt.datetime.utcnow() + dt.timedelta(hours=13)).date()
+    days = [nz_today - dt.timedelta(days=k) for k in range(3)]
+    shots = []
+    for day in days:
+        for sat in TC_SATS:
+            img = np.zeros((H, W, 3), np.uint8); got = 0
+            for r in range(r0, r1 + 1):
+                for c in range(c0, c1 + 1):
+                    u = f"https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/VIIRS_{sat}_CorrectedReflectance_TrueColor/default/{day}/250m/{z}/{r}/{c}.jpg"
+                    try:
+                        rq = requests.get(u, timeout=60)
+                        if rq.status_code != 200 or not rq.content:
+                            continue
+                        t = np.asarray(Image.open(io.BytesIO(rq.content)).convert("RGB"))
+                    except Exception:
+                        continue
+                    img[(r - r0) * 512:(r - r0 + 1) * 512, (c - c0) * 512:(c - c0 + 1) * 512] = t; got += 1
+            img = img[y0:y0 + h, x0:x0 + w].astype(np.float32)
+            if not got:
+                continue
+            mean = img.mean(2); sat_ = img.max(2) - img.min(2)
+            nodata = img.sum(2) < 12                                      # outside the swath: black
+            # clouds and sun glare are bright and grey; sea is dark. Smooth so choices come in patches, not speckle
+            bad = np.clip((mean - 70) / 60, 0, 1) * np.clip(1.2 - sat_ / 90, 0.2, 1)
+            bad = _box(bad, 4); bad[nodata] = 9
+            clear = float(((bad < 0.25) & ~nodata).mean())
+            log(f"truecolour: {sat} {day} {got} tiles, {clear:.0%} clear")
+            if clear > 0.02:
+                shots.append({"day": day, "sat": sat, "img": img, "bad": bad, "clear": clear})
+    if not shots:
+        raise RuntimeError("no VIIRS true colour in the last 3 days")
+    out = np.zeros((h, w, 3), np.float32); best = np.full((h, w), 99.0); src = np.full((h, w), -1, np.int16)
+    for k, s in enumerate(shots):                                         # newest day first; a day only counts where it's clear
+        age = (nz_today - s["day"]).days
+        cost = s["bad"] + 0.6 * age                                       # a clear older pixel beats a cloudy new one, not a clear new one
+        take = cost < best
+        out[take] = s["img"][take]; best[take] = cost[take]; src[take] = k
+    Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(os.path.join(OUT, "truecolour.jpg"), quality=86, optimize=True)
+    used = [{"day": str(s["day"]), "sat": s["sat"], "share": round(float((src == k).mean()), 3), "clear": round(s["clear"], 3)} for k, s in enumerate(shots)]
+    used = [u for u in used if u["share"] > 0.001]
+    newest = max(u["day"] for u in used)
+    with open(os.path.join(OUT, "truecolour.json"), "w") as f:
+        json.dump({"updated": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ"), "newest": newest, "lon0": BOX["lon0"], "lon1": BOX["lon0"] + w * res,
+                   "lat1": BOX["lat1"], "lat0": BOX["lat1"] - h * res, "clear": round(float((best < 0.25).mean()), 3), "sources": used}, f)
+    log("truecolour: mosaic from " + ", ".join(f"{u['sat']} {u['day']} {u['share']:.0%}" for u in used))
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     ok = 0
     # most important first; slow model downloads are skipped if the morning budget runs out
     only = set(sys.argv[1:])
-    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, reserves, dumping, currents, tides, model_grid, forecast):
+    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, truecolour, reserves, dumping, currents, tides, model_grid, forecast):
         if only and job.__name__ not in only:
             continue
         if job in (model_grid, forecast) and time.time() - T0 > 25 * 60:
