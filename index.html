@@ -659,6 +659,14 @@ function courseInfo(A,line,mode){const L=A.sst.length-1,a=line[0],b=line[line.le
   const m=line[Math.floor(line.length/2)],i=Math.round((m[1]-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-m[0])/AREA.res),n=ix(i,j);
   const gx=A.fr[L].gx[n],gy=A.fr[L].gy[n],hx=Math.sin(h*RAD),hy=Math.cos(h*RAD),cross=hx*gy-hy*gx;
   return{h,along,warm:mode==="front"&&Math.hypot(gx,gy)>.02?(cross>0?"port":"starboard"):null};}
+// Pakula: troll down current (wounded bait drifts with it), zig-zag while searching, run straight back up-current to reset.
+// With little current, keep the sun behind or beside you (predators don't like striking into a low sun).
+function trollDir(A,line,mode,t){let info=courseInfo(A,line,mode);
+  if(info.along!=null&&Math.abs(info.along)>=.15){if(info.along<0){line=line.slice().reverse();info=courseInfo(A,line,mode);}return{line,info};}
+  const d=new Date(t||Date.now()),solar=(d.getUTCHours()+d.getUTCMinutes()/60+line[0][1]/15)%24,east=solar<12;   // morning sun in the east
+  if(Math.sin(info.h*RAD)>0===east){line=line.slice().reverse();info=courseInfo(A,line,mode);}
+  return{line,info};}
+function trollNote(along){return along==null?"":Math.abs(along)<.15?", current slack so the sun's kept behind you":`, down a ${along.toFixed(1)} kn current; run straight back up-current to start the next pass`;}
 function waypoints(A,score,n=WP_N){
   const L=A.sst.length-1,cells=[],RM=resMask();for(let k=0;k<NN;k++){const ci=k%NX,cj=(k-ci)/NX;if(score[k]>0&&ci>4&&cj>4&&cj<NY-5&&lonOf(ci)<=178.0&&!RM[k]&&A.depth[k]>25)cells.push(k);}
   cells.sort((a,b)=>score[b]-score[a]);
@@ -667,7 +675,7 @@ function waypoints(A,score,n=WP_N){
   return picked.map((p,w)=>{const la=latOf(p.j),lo=lonOf(p.i);
     const onFront=Math.hypot(A.fr[L].gx[p.k],A.fr[L].gy[p.k])>0.05||A.frontDist[p.k]<3,mode=onFront?"front":"depth";
     let line=traceLine(A,la,lo,mode,3*NM);if(lineLen(line)<1.5)line=[[la,lo],[la+.01,lo]];
-    let info=courseInfo(A,line,mode);if(info.along!=null&&info.along>0){line=line.reverse();info=courseInfo(A,line,mode);}   // troll into the current
+    let info;({line,info}=trollDir(A,line,mode,Date.now()+3600e3*(((18-new Date().getUTCHours())+24)%24)));   // planned for dawn
     const course=zigzag(A,line,mode),len=lineLen(course)/NM;
     const port=PORTS.map(([nm,pa,po])=>({nm,d:hav(pa,po,la,lo)/NM,b:brg(pa,po,la,lo)})).sort((a,b)=>a.d-b.d)[0];
     const per=A.ccFreq[p.k],fd=A.frontDist[p.k],why=[];
@@ -1031,7 +1039,7 @@ function wpCards(){
     <div class="wpt">${w.tag}</div>
     <div class="wpc">${fmtLL(w.lat,w.lon)}</div>
     <div class="chips"><span class="chip">${w.sst.toFixed(1)}°C</span><span class="chip">Break ${w.brk.toFixed(2)}°C/2 km</span><span class="chip">${Math.round(w.depth)} m deep</span>${w.chl!=null&&!isNaN(w.chl)?`<span class="chip">Chl ${w.chl.toFixed(2)}</span>`:""}<span class="chip">5-day ${w.change>=0?"+":""}${w.change.toFixed(1)}°C</span></div>
-    <div class="wpr">Troll course ${w.len.toFixed(1)} nm, zig-zagging ${w.src}, general heading ${Math.round(w.head).toString().padStart(3,"0")}°T${w.along!=null?`, ${w.along<-.05?`into a ${Math.abs(w.along).toFixed(1)} kn current`:"current slack along the line"}`:""}.${w.warm?` Warm water on your ${w.warm} side.`:""} Start ${fmtLL(w.course[0][0],w.course[0][1])}.</div>
+    <div class="wpr">Troll course ${w.len.toFixed(1)} nm, zig-zagging ${w.src}, general heading ${Math.round(w.head).toString().padStart(3,"0")}°T${trollNote(w.along)}.${w.warm?` Warm water on your ${w.warm} side.`:""} Start ${fmtLL(w.course[0][0],w.course[0][1])}.</div>
     <div class="srcm">${w.port.d.toFixed(0)} nm on ${Math.round(w.port.b).toString().padStart(3,"0")}° from ${w.port.nm}</div></div>`).join("");
   $("wplist").querySelectorAll(".wp").forEach(el=>el.onclick=()=>{MAP.sel=+el.dataset.n;const w=MAP.wps.find(x=>x.n===MAP.sel);MAP.target={n:"WP"+w.n,la:w.lat,lo:w.lon};draw();wpCards();});}
 
@@ -1526,12 +1534,12 @@ async function stayHere(){const out=$("planout");await ensureMap();const pos=cat
   if(!pos){out.innerHTML=`<div class="why">Where's the sign? Turn on ◎ for GPS, or tap the spot on the map, then press <b>Found sign: stay here</b> again.</div>`;document.querySelector('.tab[data-t="map"]').click();return;}
   const A=MAP.A,{la,lo}=pos,now=Date.now(),W=dayWindow(0,true),c=conditionsAt(la,lo),e=evalSpot(la,lo,1)||{why:[],sst:c.sst||0,inRange:true};
   const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res),n=ix(i,j),onFront=A.frontDist[n]<4,mode=onFront?"front":"depth";
-  let line=traceLine(A,la,lo,mode,1.2*NM);if(lineLen(line)<1)line=[[la,lo],[la+.012,lo]];let info=courseInfo(A,line,mode);if(info.along!=null&&info.along>0){line=line.reverse();info=courseInfo(A,line,mode);}
+  let line=traceLine(A,la,lo,mode,1.2*NM);if(lineLen(line)<1)line=[[la,lo],[la+.012,lo]];let info;({line,info}=trollDir(A,line,mode,Date.now()));
   const course=zigzag(A,line,mode),len=lineLen(course)/NM;
   const port=PORTS.find(p=>p[0]===HOMEPORT)||PORTS[4],home=[port[1],port[2]],dh=hav(la,lo,home[0],home[1])/NM,leaveBy=W.back-dh/PSET.cruise*36e5;
   const ev=solunar(nzMidnightUtc(0),BOP.lat,BOP.lon).filter(x=>x.type!=="Sun").map(x=>({a:x.t-x.dur*30e3,b:x.t+x.dur*30e3,type:x.type})).filter(x=>x.b>now&&x.a<leaveBy);
   const ss=W.ss,eveA=ss-90*6e4;const cand=planCandidates(home,null,null,true).filter(x=>{const d=hav(x.la,x.lo,la,lo)/NM;return d>1.2&&d<=6;}).sort((a,b)=>b.v-a.v).slice(0,2);
-  const items=[`<b>Now</b> Work the sign: ${len.toFixed(1)} nm zig-zag ${onFront?"along the temperature break":"along the depth contour"} through your position, heading ${p3(info.h)}°T${info.along!=null&&info.along<-.05?` into a ${Math.abs(info.along).toFixed(1)} kn current`:""}${info.warm?`, warm water to ${info.warm}`:""}. Turn and repeat it, keeping the sign inside the pattern. About ${Math.round(len/PSET.troll*60)} min per pass at ${PSET.troll} kn.`,
+  const items=[`<b>Now</b> Work the sign: ${len.toFixed(1)} nm zig-zag ${onFront?"along the temperature break":"along the depth contour"} through your position, heading ${p3(info.h)}°T${trollNote(info.along)}${info.warm?`, warm water to ${info.warm}`:""}. Circle back and repeat it on a slightly different angle, keeping the sign inside the pattern and running alongside bait schools, not through them. About ${Math.round(len/PSET.troll*60)} min per pass at ${PSET.troll} kn.`,
     `Here: ${c.sst!=null?c.sst.toFixed(1)+"°C":"n/a"}${c.dep!=null?`, ${Math.round(c.dep)} m deep`:""}${c.front!=null?`, nearest break ${c.front<1?"right here":c.front.toFixed(1)+" km away"}`:""}${A.convN&&A.convN[n]>.4?", currents converging":""}${e.why&&e.why.filter(x=>!/temperature break/.test(x)).length?`; ${e.why.filter(x=>!/temperature break/.test(x))[0]}`:""}.`,
     ev.length?`Bite periods still to come: ${ev.map(x=>`<b>${x.type}</b> ${tmF(Math.max(x.a,now))} to ${tmF(x.b)}`).join(", ")}${ss-90*6e4<leaveBy?`, and the evening bite from ${tmF(eveA)}`:""}. Be on the sign for these.`:`No more bite periods before you need to leave${eveA<leaveBy?`, apart from the evening bite from ${tmF(eveA)}`:""}.`,
     cand.length?`If it goes quiet for an hour: ${cand.map(x=>`<b>${x.n}</b> ${legF([la,lo],[x.la,x.lo])} (${reasonF(x.e)})`).join("; or ")}.`:"",
