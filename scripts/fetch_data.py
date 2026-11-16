@@ -379,6 +379,10 @@ def ocean():
                                  ("nesdisNPPN20S3AkdSCIDINEOFDaily", "VIIRS + Sentinel-3 OLCI Kd490, 9 km")], var, latest, time="[last]", digits=4, max_age=7)
         if kd:
             out["kd"], out["kd_label"] = kd, label; log("ocean: kd", label); break
+    if not kd:
+        for k in ("kd", "kd_label", "kd_age"):
+            out.pop(k, None)
+        log("ocean: no usable clarity data today")
     if not out.get("sst"):
         raise RuntimeError("no SST at all")
     with open(path, "w") as f:
