@@ -2,7 +2,7 @@
 
 Runs on GitHub Actions each morning. Downloads only the Bay of Plenty box from:
   1. NOAA ACSPO Himawari-9 hourly SST (L3C, 0.02 deg) via NOAA CoastWatch THREDDS
-  2. Moana Project ocean forecast (temperature at depth), once MOANA_URL is set
+  2. NOAA ERDDAP SST, chlorophyll, clarity; NIWA bathymetry; Open-Meteo model currents, wind, tides; DOC reserves
 and writes small JSON files to data/ that the app reads.
 
 Each source is optional: if one fails, the others still update and the app
@@ -135,30 +135,6 @@ def himawari():
     with open(os.path.join(OUT, "himawari.json"), "w") as f:
         json.dump(out, f, separators=(",", ":"))
     print(f"himawari: {len(frames)} hours, coverage {coverage:.0%}")
-
-
-def moana():
-    url = os.environ.get("MOANA_URL")
-    if not url:
-        print("moana: MOANA_URL not set yet, skipping")
-        return
-    ds = xr.open_dataset(url)
-    tvar = next(v for v in ["temp", "temperature", "thetao", "sea_water_temperature"] if v in ds)
-    latn = next(v for v in ["lat", "latitude", "lat_rho"] if v in ds.variables)
-    lonn = next(v for v in ["lon", "longitude", "lon_rho"] if v in ds.variables)
-    depthn = next((v for v in ["depth", "z", "lev"] if v in ds[tvar].dims), None)
-    if depthn is None or ds[latn].ndim != 1:
-        raise RuntimeError("Moana file is on a model grid this script doesn't handle yet; send the URL to Claude to adapt")
-    ds = subset(ds, latn, lonn)
-    t = ds[tvar].isel(time=-1) if "time" in ds[tvar].dims else ds[tvar]
-    layers = {}
-    for depth in (50, 100, 200):
-        field = t.sel({depthn: depth}, method="nearest")
-        layers[str(depth)] = grid_json(ds[latn].values, ds[lonn].values, field.values)
-    out = {"source": "Moana Project ocean forecast (MetService)", "updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z", "layers": layers}
-    with open(os.path.join(OUT, "moana.json"), "w") as f:
-        json.dump(out, f, separators=(",", ":"))
-    print("moana: wrote", list(layers))
 
 
 ERDS = ["https://coastwatch.pfeg.noaa.gov/erddap/griddap/", "https://upwell.pfeg.noaa.gov/erddap/griddap/", "https://polarwatch.noaa.gov/erddap/griddap/",
@@ -311,7 +287,7 @@ def openmeteo(base, pts, params, chunk=80):
         r = None
         for attempt in range(3):
             try:
-                r = requests.get(base, params=q, timeout=120); r.raise_for_status(); break
+                r = requests.get(base, params=q, timeout=180); r.raise_for_status(); break
             except Exception as e:
                 log("  open-meteo retry", attempt, str(e)[:120]); r = None; time.sleep(6)
         if r is None:
@@ -668,10 +644,108 @@ def alerts():
     log("alerts:", len(items), "marks flagged")
 
 
+# ---------------------------------------------------------------- high-res model currents + dynamic sea level
+def model_grid():
+    """Copernicus Mercator 1/12 deg surface currents and sea level, 24 h mean (removes the tide), on a 0.08 deg grid.
+    Used for detailed current arrows, convergence/upwelling zones and eddies."""
+    pts = ocean_points(0.08, margin=0.04, min_depth=8)
+    log("model_grid:", len(pts), "points")
+    R = openmeteo(MARINE, pts, {"hourly": "ocean_current_velocity,ocean_current_direction,sea_level_height_msl", "past_days": 1,
+                                "forecast_days": 1, "timezone": "UTC", "wind_speed_unit": "ms"}, chunk=50)
+    lats = sorted({p[0] for p in pts}, reverse=True); lons = sorted({p[1] for p in pts})
+    L = {v: k for k, v in enumerate(lats)}; O = {v: k for k, v in enumerate(lons)}
+    U, V, E = (np.full((len(lats), len(lons)), np.nan) for _ in range(3))
+    now = dt.datetime.utcnow()
+    for (la, lo), d in zip(pts, R):
+        H = d.get("hourly") or {}
+        us, vs, es = [], [], []
+        for t, sp, di, h in zip(H.get("time", []), H.get("ocean_current_velocity", []), H.get("ocean_current_direction", []), H.get("sea_level_height_msl", [])):
+            tt = dt.datetime.fromisoformat(t)
+            if not (now - dt.timedelta(hours=25) <= tt <= now):
+                continue
+            if sp is not None and di is not None:
+                s = sp
+                us.append(s * np.sin(np.radians(di))); vs.append(s * np.cos(np.radians(di)))   # direction the current flows toward
+            if h is not None:
+                es.append(h)
+        if len(us) >= 12:
+            U[L[la], O[lo]] = np.mean(us); V[L[la], O[lo]] = np.mean(vs)
+        if len(es) >= 20:
+            E[L[la], O[lo]] = np.mean(es)
+    E = E - np.nanmean(E)
+    spd = np.nanmedian(np.hypot(U, V))
+    if spd > 1.2:            # API answered in km/h despite the unit request
+        U /= 3.6; V /= 3.6
+    log(f"model_grid: median current {np.nanmedian(np.hypot(U, V)):.2f} m/s")
+    ok = np.isfinite(U).mean()
+    if ok < 0.3:
+        raise RuntimeError(f"model grid too sparse ({ok:.0%})")
+    out = {"source": "Copernicus Mercator 1/12 deg (SMOC) via Open-Meteo, 24 h mean", "updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z",
+           **pack(lats, lons, ["u", "v", "eta"], np.array([U, V, E]), digits=3)}
+    with open(os.path.join(OUT, "model.json"), "w") as f:
+        json.dump(out, f, separators=(",", ":"))
+    log(f"model_grid: wrote {len(lats)}x{len(lons)}, {ok:.0%} filled")
+
+
+# ---------------------------------------------------------------- full-detail survey tiles (10 m contours when zoomed in)
+TILE_DEG, TILE_RES = 0.25, 0.0004      # 625 x 625 px tiles, ~35 x 44 m cells
+
+
+def bathy_tiles():
+    """One-time job: NIWA survey at ~40 m in 0.25 deg PNG tiles, loaded by the app only when zoomed in."""
+    import requests, io
+    from PIL import Image
+    tdir = os.path.join(OUT, "tiles"); idx = os.path.join(tdir, "index.json")
+    if os.path.exists(idx):
+        log("bathy_tiles: already saved, skipping"); return
+    os.makedirs(tdir, exist_ok=True)
+    meta = json.load(open(os.path.join(OUT, "bathy_hd.json")))
+    px = np.array(Image.open(os.path.join(OUT, "bathy_hd.png")).convert("RGB")).astype(np.int32)
+    base = ((px[..., 0] << 8) | px[..., 1]) - meta["offset"]; srcmask = px[..., 2] > 127
+    n = int(round(TILE_DEG / TILE_RES))
+    nti = int(np.ceil((BOX["lon1"] - BOX["lon0"]) / TILE_DEG)); ntj = int(np.ceil((BOX["lat1"] - BOX["lat0"]) / TILE_DEG))
+    url = f"{NIWA}/Bay_of_Plenty_25m_DTM/ImageServer/exportImage"
+    tiles = []
+    for tj in range(ntj):
+        for ti in range(nti):
+            w = BOX["lon0"] + ti * TILE_DEG; nlat = BOX["lat1"] - tj * TILE_DEG
+            # only where the base grid says NIWA has data and there's some sea
+            bi0 = int((w - meta["lon0"]) / meta["rx"]); bj0 = int((meta["lat1"] - nlat) / meta["ry"])
+            sub = srcmask[max(0, bj0):bj0 + int(TILE_DEG / meta["ry"]), max(0, bi0):bi0 + int(TILE_DEG / meta["rx"])]
+            sea = base[max(0, bj0):bj0 + int(TILE_DEG / meta["ry"]), max(0, bi0):bi0 + int(TILE_DEG / meta["rx"])] > 0
+            if sub.size == 0 or sub.mean() < 0.05 or sea.mean() < 0.02:
+                continue
+            q = {"bbox": f"{w},{nlat - TILE_DEG},{w + TILE_DEG},{nlat}", "bboxSR": 4326, "imageSR": 4326, "size": f"{n},{n}",
+                 "format": "tiff", "pixelType": "F32", "interpolation": "RSP_BilinearInterpolation", "f": "image"}
+            try:
+                r = requests.get(url, params=q, timeout=180); r.raise_for_status()
+                import tifffile
+                arr = tifffile.imread(io.BytesIO(r.content)).astype(np.float32)
+                if arr.ndim == 3:
+                    arr = arr[..., 0]
+            except Exception as e:
+                log("bathy_tiles:", ti, tj, "failed", str(e)[:100]); continue
+            lon_c = w + (np.arange(n) + 0.5) * TILE_RES; lat_c = nlat - (np.arange(n) + 0.5) * TILE_RES
+            fi = np.clip(((lon_c - meta["lon0"]) / meta["rx"]).round().astype(int), 0, meta["nx"] - 1)
+            fj = np.clip(((meta["lat1"] - lat_c) / meta["ry"]).round().astype(int), 0, meta["ny"] - 1)
+            fill = base[np.ix_(fj, fi)].astype(np.float32)               # depth from the base grid where the survey has gaps
+            ok = np.isfinite(arr) & (np.abs(arr) < 12000) & (arr != 0)
+            depth = np.where(ok, -arr, fill)
+            v = np.clip(np.round(depth) + 20000, 0, 65535).astype(np.uint32)
+            rgb = np.stack([(v >> 8).astype(np.uint8), (v & 255).astype(np.uint8), np.zeros_like(v, dtype=np.uint8)], axis=-1)
+            Image.fromarray(rgb, "RGB").save(os.path.join(tdir, f"{ti}_{tj}.png"), optimize=True)
+            tiles.append([ti, tj]); log(f"bathy_tiles: {ti}_{tj} ok ({ok.mean():.0%} survey)")
+            time.sleep(0.5)
+    with open(idx, "w") as f:
+        json.dump({"source": "NIWA Bay of Plenty 25 m survey", "lon0": BOX["lon0"], "lat1": BOX["lat1"], "deg": TILE_DEG, "res": TILE_RES, "n": n,
+                   "offset": 20000, "tiles": tiles}, f)
+    log("bathy_tiles: wrote", len(tiles), "tiles")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     ok = 0
-    for job in (bathy, bathy_hd, ocean, currents, forecast, tides, reserves, alerts, himawari, moana):
+    for job in (bathy, bathy_hd, bathy_tiles, ocean, model_grid, currents, forecast, tides, reserves, alerts, himawari):
         try:
             job(); ok += 1
         except Exception as e:

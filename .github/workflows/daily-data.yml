@@ -20,8 +20,6 @@ jobs:
           python-version: "3.12"
       - run: pip install xarray netCDF4 siphon numpy requests pillow tifffile imagecodecs
       - run: python scripts/fetch_data.py
-        env:
-          MOANA_URL: ${{ secrets.MOANA_URL }}
       - name: Save new data
         run: |
           git config user.name "bluewater-bot"
