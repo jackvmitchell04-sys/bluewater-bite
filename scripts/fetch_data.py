@@ -263,9 +263,69 @@ CHL_SOURCES = [   # (dataset, stride, label)  finest first: on the same day the 
     ("noaacwNPPVIIRSchlaSectorZXDaily", 2, "S-NPP VIIRS 750 m"),
     ("noaacwS3AOLCIchlaDaily", 1, "Sentinel-3A OLCI"),
     ("noaacwS3BOLCIchlaDaily", 1, "Sentinel-3B OLCI"),
+    ("thredds:chloraVIIRSn21SectorDailyZX00", 1, "NOAA-21 VIIRS 750 m"),
+    ("thredds:chloraVIIRSn20SectorDailyZX00", 1, "NOAA-20 VIIRS 750 m"),
     ("noaacwN20VIIRSchlaDaily", 1, "NOAA-20 VIIRS"),
 ]
-KD_SOURCES = [("noaacwNPPVIIRSkd490SectorZXDaily", 2, "S-NPP VIIRS 750 m")]
+KD_SOURCES = [("thredds:kd490VIIRSn21SectorDailyZX00", 1, "NOAA-21 VIIRS 750 m"),
+              ("thredds:kd490VIIRSn20SectorDailyZX00", 1, "NOAA-20 VIIRS 750 m"),
+              ("noaacwNPPVIIRSkd490SectorZXDaily", 2, "S-NPP VIIRS 750 m")]   # S-NPP ended 2 Nov 2026; kept in case of reprocessing
+SECTOR_CACHE = os.environ.get("SECTOR_CACHE", os.path.join(os.path.dirname(__file__), "..", ".cache", "sector"))
+
+
+def thredds_sector_frames(root, var, d0, pad=0.05, res=0.0075):
+    """Daily CoastWatch VIIRS sector files (750 m, NZ sector ZX) on THREDDS: find the Bay in each file, cut it out over
+    OPeNDAP, bin to a regular lat/lon grid. Same return shape as erddap_frames. Cut-outs are cached between runs."""
+    import netCDF4, re, requests
+    os.makedirs(SECTOR_CACHE, exist_ok=True)
+    with open(os.path.expanduser("~/.dodsrc"), "w") as f:
+        f.write("HTTP.TIMEOUT=90\nHTTP.CONNECTTIMEOUT=15\n")
+    B = "https://coastwatch.noaa.gov/thredds"
+    la0, la1, lo0, lo1 = BOX["lat0"] - pad, BOX["lat1"] + pad, BOX["lon0"] - pad, BOX["lon1"] + pad
+    lats = np.round(np.arange(la1, la0 - 1e-9, -res), 4); lons = np.round(np.arange(lo0, lo1 + 1e-9, res), 4)
+    files = []
+    for yr in sorted({d0.year, dt.date.today().year}):
+        t = requests.get(f"{B}/catalog/{root}/{yr}/catalog.html", timeout=60).text
+        for f in sorted(set(re.findall(r"([A-Za-z0-9_.\-]+\.nc)", t))):
+            m = re.search(r"(?:C|V)(\d{4})(\d{3})", f)
+            if m:
+                d = dt.date(int(m.group(1)), 1, 1) + dt.timedelta(days=int(m.group(2)) - 1)
+                if d >= d0:
+                    files.append((d, f"{yr}/{f}"))
+    times, frames = [], []
+    for d, f in sorted(files):
+        cf = os.path.join(SECTOR_CACHE, (root + "_" + f).replace("/", "_") + f".{var}.npy")
+        if os.path.exists(cf):
+            G = np.load(cf)
+        else:
+            try:
+                nc = netCDF4.Dataset(f"{B}/dodsC/{root}/{f}")
+                st = 40
+                sla = np.ma.filled(nc.variables["swath_latitude"][0, 0, ::st, ::st].astype(float), np.nan)
+                slo = np.ma.filled(nc.variables["swath_longitude"][0, 0, ::st, ::st].astype(float), np.nan)
+                m = (sla > la0) & (sla < la1) & (slo > lo0) & (slo < lo1)
+                if not m.any():
+                    nc.close(); continue
+                jj, ii = np.where(m); R, C = nc.variables["swath_latitude"].shape[-2:]
+                r0, r1, c0, c1 = max(0, (jj.min() - 1) * st), min(R, (jj.max() + 2) * st), max(0, (ii.min() - 1) * st), min(C, (ii.max() + 2) * st)
+                v = np.ma.filled(nc.variables[var][0, 0, r0:r1, c0:c1].astype(float), np.nan)
+                la_ = np.ma.filled(nc.variables["swath_latitude"][0, 0, r0:r1, c0:c1].astype(float), np.nan)
+                lo_ = np.ma.filled(nc.variables["swath_longitude"][0, 0, r0:r1, c0:c1].astype(float), np.nan)
+                nc.close()
+            except Exception as e:
+                log(f"colour: {root} {f} failed: {str(e)[:80]}"); continue
+            ok = np.isfinite(v) & (v > 0) & np.isfinite(la_) & np.isfinite(lo_)
+            gi = np.round((lo_[ok] - lo0) / res).astype(int); gj = np.round((la1 - la_[ok]) / res).astype(int)
+            k = (gi >= 0) & (gi < len(lons)) & (gj >= 0) & (gj < len(lats))
+            S = np.zeros((len(lats), len(lons))); N = np.zeros_like(S)
+            np.add.at(S, (gj[k], gi[k]), v[ok][k]); np.add.at(N, (gj[k], gi[k]), 1)
+            with np.errstate(invalid="ignore"):
+                G = np.where(N > 0, S / N, np.nan)
+            np.save(cf, G.astype(np.float32))
+        times.append(d.isoformat()); frames.append(G)
+    if not frames:
+        raise RuntimeError(f"{root}: no files over the Bay since {d0}")
+    return list(lats), list(lons), times, frames
 MERGE_RES = 0.015
 
 
@@ -310,7 +370,12 @@ def merged_colour(sources, var, latest, lookback=5, ndays=6):
         got = False
         for alt in (True, False):
             try:
-                la, lo, tt, arr = erddap_frames(ds, var, f"[({d0.isoformat()}T00:00:00Z):1:(last)]", alt=alt, stride=stride, pad=0.05)
+                if ds.startswith("thredds:"):
+                    if not alt:
+                        break
+                    la, lo, tt, arr = thredds_sector_frames(ds[8:], var, d0)
+                else:
+                    la, lo, tt, arr = erddap_frames(ds, var, f"[({d0.isoformat()}T00:00:00Z):1:(last)]", alt=alt, stride=stride, pad=0.05)
                 for t, a in zip(tt, arr):
                     if np.isfinite(a).sum() > 50:
                         obs.append((dt.date.fromisoformat(t), rank, _resample(la, lo, a, LA, LO)))

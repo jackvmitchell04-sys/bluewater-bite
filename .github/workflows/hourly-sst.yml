@@ -18,9 +18,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4          # raw VIIRS passes already gridded on earlier runs
+      - uses: actions/cache@v4          # raw VIIRS passes and 750 m colour cut-outs from earlier runs
         with:
-          path: .cache/l2p
+          path: .cache
           key: l2p-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: l2p-
       - uses: actions/setup-python@v5
