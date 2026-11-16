@@ -865,7 +865,7 @@ function draw(){
   const drawB=(k,op)=>{if(!BI)return;g.save();if(op)g.globalCompositeOperation=op,g.globalAlpha=.5;g.save();clipOut();g.drawImage(BI[k],bx,by,bw,bh);g.restore();
     for(const t of TL)g.drawImage(t.img[k],X(t.b.w),Y(t.b.n),X(t.b.e)-X(t.b.w),Y(t.b.s)-Y(t.b.n));g.restore();};
   if(MAP.layer==="tc"){drawB("chart");drawTC(g,X,Y,V,W);}
-  else if(MAP.layer==="sharp"&&li.sharp){drawB("chart");const SH=A.sharp,m=SH.meta;g.imageSmoothingEnabled=VIEW.z<3;g.drawImage(sharpImage(SH,li.lo,li.hi),X(m.lon0),Y(m.lat1),m.nx*m.res*kx,m.ny*m.res*ky);g.imageSmoothingEnabled=true;
+  else if(MAP.layer==="sharp"&&li.sharp){drawB("chart");const SH=A.sharp,m=SH.meta;g.imageSmoothingEnabled=true;g.drawImage(sharpImage(SH,li.lo,li.hi),X(m.lon0),Y(m.lat1),m.nx*m.res*kx,m.ny*m.res*ky);g.imageSmoothingEnabled=true;
     if(BI&&MAP.showRelief)drawB("relief","multiply");
     if(MAP.showFronts){g.fillStyle="rgba(255,255,255,.9)";const r=Math.max(.7,Math.min(2.2,m.res*kx*.55));for(const[la,lo]of m.fronts){const x=X(lo),y=Y(la);if(x<0||y<0||x>W||y>H)continue;g.fillRect(x-r,y-r,2*r,2*r);}}}
   else if(MAP.layer==="chart"&&BI)drawB("chart");
@@ -905,7 +905,7 @@ function draw(){
   if(MAP.showEddies&&A.eddyW){segs(A.eddyW,.5,"rgba(255,80,60,.95)",2.2,[7,4]);segs(A.eddyC,.5,"rgba(80,160,255,.95)",2.2,[7,4]);
     g.font="bold 11px sans-serif";for(const e of A.eddyList){const x=X(e.lon),y=Y(e.lat);if(!inView(x,y))continue;const t=(e.sign>0?"Warm eddy":"Cold eddy")+` ~${Math.round(e.km)} km`+(e.conf?" ✓ satellite":"");
       g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.75)";g.strokeText(t,x-30,y);g.fillStyle=e.sign>0?"#ff9a85":"#9cc8ff";g.fillText(t,x-30,y);}}
-  if(MAP.showFronts&&!chartMode&&MAP.layer!=="sharp"){const e=A.cc[Math.min(MAP.day,A.cc.length-1)],r=Math.min(3,Math.max(.9,cw*.35));g.fillStyle="rgba(255,255,255,.85)";
+  if(MAP.showFronts&&!chartMode&&MAP.layer!=="sharp"&&MAP.layer!=="tc"){const e=A.cc[Math.min(MAP.day,A.cc.length-1)],r=Math.min(3,Math.max(.9,cw*.35));g.fillStyle="rgba(255,255,255,.85)";
     for(let n=0;n<NN;n++)if(e[n]&&!A.land[n]){const i=n%NX,j=(n-i)/NX,x=X(lonOf(i)),y=Y(latOf(j));if(!inView(x,y))continue;g.beginPath();g.arc(x,y,r,0,7);g.fill();}
     if(A.chlEdge&&MAP.layer==="chl"){g.fillStyle="rgba(255,0,200,.8)";for(let n=0;n<NN;n++)if(A.chlEdge[n]){const i=n%NX,j=(n-i)/NX;g.fillRect(X(lonOf(i))-cw*.3,Y(latOf(j))-ch*.3,cw*.6,ch*.6);}}}
   // graticule adapts to zoom
