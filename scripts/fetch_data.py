@@ -192,55 +192,71 @@ OCEAN = {}   # arrays kept for the jobs that run after ocean()
 
 
 def best_recent(candidates, var, latest, time="[last-5:1:last]", digits=3, max_age=5):
-    """Try each (dataset, label) in order; use the first whose newest day is within max_age days of the MUR SST date."""
+    """Try each (dataset, label) in order; use the first whose newest day is within max_age days of the SST date.
+    Near-real-time products with cloud gaps get a running composite (most recent clear pixel wins)."""
     for ds, label in candidates:
         for alt in (True, False):
             try:
-                r = erddap_frames(ds, var, time, alt=alt, pad=0.1)
-                age = (dt.date.fromisoformat(latest) - dt.date.fromisoformat(r[2][-1])).days
+                la, lo, tt, arr = erddap_frames(ds, var, time, alt=alt, pad=0.1)
+                age = (dt.date.fromisoformat(latest) - dt.date.fromisoformat(tt[-1])).days
                 if age > max_age:
-                    log(f"ocean: {ds} newest day {r[2][-1]} is {age} days behind, trying next"); break
-                return pack(*r, digits=digits), label
+                    log(f"ocean: {ds} newest day {tt[-1]} is {age} days behind, trying next"); break
+                if "NRT" in label:
+                    for k in range(1, len(arr)):
+                        arr[k] = np.where(np.isfinite(arr[k]), arr[k], arr[k - 1])
+                return pack(la, lo, tt, arr, digits=digits), label
             except Exception as e:
                 log("ocean:", ds, "alt" if alt else "no-alt", "failed:", str(e)[:100])
     return None, None
 
 
 def ocean():
-    """All NOAA ERDDAP layers the app needs (browsers can't read ERDDAP directly)."""
-    out = {"updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z"}
+    """All NOAA ERDDAP layers the app needs. Each part is independent: anything that fails keeps yesterday's copy,
+    and every part carries its own dates so the app can tell how fresh it is."""
+    path = os.path.join(OUT, "ocean.json")
+    try:
+        out = json.load(open(path))
+    except Exception:
+        out = {}
+    out["updated"] = dt.datetime.utcnow().isoformat(timespec="minutes") + "Z"
     sst = None
     for ds, stride, label in [("jplMURSST41", 2, "NASA JPL MUR, 1 km daily"), ("noaacwBLENDEDsstDNDaily", 1, "NOAA Geo-Polar Blended, 5 km daily (MUR server unavailable)")]:
         try:
             lats, lons, times, sst = erddap_frames(ds, "analysed_sst", "[last-5:1:last]", stride=stride, pad=0.05)
             if np.nanmean(sst) > 200:
                 sst = sst - 273.15
-            out["sst_label"] = label; break
+            out["sst_label"] = label; out["sst"] = pack(lats, lons, times, sst); OCEAN["sst"] = (lats, lons, times, sst)
+            log("ocean:", label, times[0], "to", times[-1]); break
         except Exception as e:
             log("ocean: SST", ds, "failed:", str(e)[:100]); sst = None
-    if sst is None:
-        raise RuntimeError("no SST source reachable")
-    OCEAN["sst"] = (lats, lons, times, sst)
-    out["sst"] = pack(lats, lons, times, sst); log("ocean:", out["sst_label"], times[0], "to", times[-1])
-    try:
-        out["clim"] = pack(*erddap_frames("jplMURSST41clim", "mean_sst", f"[({dt.datetime.strptime(times[-1], '%Y-%m-%d').timetuple().tm_yday})]", stride=2, pad=0.02), digits=2); log("ocean: clim ok")
-    except Exception as e:
-        log("ocean: clim failed:", str(e)[:120])
+    if sst is None and out.get("sst"):
+        o = out["sst"]; arr = np.array([[[np.nan if v is None else v for v in r] for r in f] for f in o["frames"]], float)
+        OCEAN["sst"] = (o["lats"], o["lons"], o["times"], arr); log("ocean: SST kept from previous run", o["times"][-1])
+    latest = OCEAN["sst"][2][-1] if "sst" in OCEAN else dt.date.today().isoformat()
+    if sst is not None:
+        try:
+            out["clim"] = pack(*erddap_frames("jplMURSST41clim", "mean_sst", f"[({dt.datetime.strptime(latest, '%Y-%m-%d').timetuple().tm_yday})]", stride=2, pad=0.02), digits=2); log("ocean: clim ok")
+        except Exception as e:
+            log("ocean: clim failed:", str(e)[:120])
     chl, label = best_recent([("noaacwNPPN20S3ASCIDINEOF2kmDaily", "NOAA VIIRS + Copernicus Sentinel-3 OLCI, 2 km gap-filled daily"),
-                              ("nesdisVHNnoaaSNPPnoaa20chlaGapfilledDaily", "NOAA VIIRS gap-filled, 9 km daily")], "chlor_a", times[-1])
+                              ("nesdisVHNnoaaSNPPnoaa20chlaGapfilledDaily", "NOAA VIIRS gap-filled, 9 km daily"),
+                              ("noaacwN20VIIRSchlaDaily", "NOAA-20 VIIRS NRT, 4 km daily, cloud gaps filled from earlier days"),
+                              ("noaacwNPPVIIRSchlaDaily", "S-NPP VIIRS NRT, 4 km daily, cloud gaps filled from earlier days")], "chlor_a", latest)
     if chl:
-        out["chl"], out["chl_label"] = chl, label; log("ocean: chl", label)
+        out["chl"], out["chl_label"] = chl, label; log("ocean: chl", label, chl["times"][-1])
     try:
         r = erddap_frames("nesdisSSH1day", "sla", "[last-5:1:last]", pad=0.5)
-        OCEAN["sla"] = r; out["sla"] = pack(*r, digits=3); log("ocean: sla ok")
+        OCEAN["sla"] = r; out["sla"] = pack(*r, digits=3); log("ocean: sla", r[2][-1])
     except Exception as e:
         log("ocean: sla failed:", str(e)[:120])
     for var in ("kd_490", "kd490"):
         kd, label = best_recent([("noaacwNPPN20S3AkdSCIDINEOF2kmDaily", "VIIRS + Sentinel-3 OLCI Kd490, 2 km"),
-                                 ("nesdisNPPN20S3AkdSCIDINEOFDaily", "VIIRS + Sentinel-3 OLCI Kd490, 9 km")], var, times[-1], time="[last]", digits=4, max_age=7)
+                                 ("nesdisNPPN20S3AkdSCIDINEOFDaily", "VIIRS + Sentinel-3 OLCI Kd490, 9 km")], var, latest, time="[last]", digits=4, max_age=7)
         if kd:
             out["kd"], out["kd_label"] = kd, label; log("ocean: kd", label); break
-    with open(os.path.join(OUT, "ocean.json"), "w") as f:
+    if not out.get("sst"):
+        raise RuntimeError("no SST at all")
+    with open(path, "w") as f:
         json.dump(out, f, separators=(",", ":"))
 
 

@@ -520,6 +520,12 @@ function cayulaCornillon(f,{win=16,step=8,minDT=0.3,theta=0.7,coh=0.92,cohAll=0.
       for(const[a,b]of[[i+1,j],[i-1,j],[i,j+1],[i,j-1]]){if(a<i0||b<j0||a>=i0+win||b>=j0+win)continue;const w=f[ix(a,b)];if(!isNaN(w)&&w>=tau){edge[ix(i,j)]=1;break;}}}}
   return edge;}
 
+/* gradient-ridge fronts: strongest 10% of SST gradients, thinned to the ridge line. Catches sharp breaks the
+   histogram method misses (e.g. a break hugging a steep slope or an island wake) */
+function gradFronts(f){const G=gradient(smooth(f)),v=[...G.g].filter(x=>!isNaN(x)).sort((a,b)=>a-b),thr=Math.max(.045,v[Math.floor(v.length*.9)]||1),e=new Uint8Array(NN);
+  for(let j=1;j<NY-1;j++)for(let i=1;i<NX-1;i++){const n=ix(i,j),g=G.g[n];if(!(g>=thr))continue;const sx=Math.round(G.gx[n]/g),sy=Math.round(G.gy[n]/g);
+    const a=G.g[ix(i+sx,j-sy)],b=G.g[ix(i-sx,j+sy)];if(!(a>g)&&!(b>g))e[n]=1;}
+  return e;}
 /* geostrophic velocity from SLA, Okubo-Weiss eddy parameter */
 function geostrophy(sla){
   const g=9.81,G=gradient(sla,1/1000),u=new Float32Array(NN).fill(NaN),v=new Float32Array(NN).fill(NaN);
@@ -544,8 +550,8 @@ function eddyComponents(A){const seen=new Uint8Array(NN);A.eddyList=[];
 function analyse(D){
   const A=D,L=D.sst.length-1;
   A.fr=D.sst.map(f=>gradient(f));
-  A.cc=D.sst.map(f=>cayulaCornillon(smooth(f),{minDT:0.25}));
-  if(D.hima&&D.himaCov>=0.3){A.himaEdge=cayulaCornillon(smooth(D.hima),{minDT:0.25});for(let n=0;n<NN;n++)if(A.himaEdge[n])A.cc[L][n]=1;}
+  A.cc=D.sst.map(f=>{const c=cayulaCornillon(smooth(f),{minDT:0.25}),r=gradFronts(f);for(let n=0;n<NN;n++)c[n]|=r[n];return c;});
+  if(D.hima&&D.himaCov>=0.3){A.himaEdge=cayulaCornillon(smooth(D.hima),{minDT:0.25});const r=gradFronts(D.hima);for(let n=0;n<NN;n++)if(A.himaEdge[n]||r[n])A.cc[L][n]=1;}
   A.ccFreq=new Float32Array(NN);for(const e of A.cc)for(let n=0;n<NN;n++)A.ccFreq[n]+=e[n]/A.cc.length;
   A.ccFreqS=smooth(A.ccFreq,2);
   A.frontDist=distKm(A.cc[L]);
@@ -585,7 +591,7 @@ function brg(a,b,c,d){const y=Math.sin((d-b)*RAD)*Math.cos(c*RAD),x=Math.cos(a*R
 const onLandRaw=(la,lo,land)=>{const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res);return i<0||j<0||i>=NX||j>=NY||land[ix(i,j)];};
 const onLand=(la,lo)=>{const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res);return i<0||j<0||i>=NX||j>=NY||MAP.A.land[ix(i,j)]||!(MAP.A.depth[ix(i,j)]>5);};
 
-function waypoints(A,score,n=6){
+function waypoints(A,score,n=8){
   const L=A.sst.length-1,cells=[],RM=resMask();for(let k=0;k<NN;k++){const ci=k%NX,cj=(k-ci)/NX;if(score[k]>0&&ci>4&&cj>4&&cj<NY-5&&lonOf(ci)<=178.0&&!RM[k])cells.push(k);}
   cells.sort((a,b)=>score[b]-score[a]);
   const top=score[cells[0]]||0,picked=[],R=11;
@@ -829,7 +835,7 @@ function draw(){
   const samples=[0,.25,.5,.75,1].map(li.pal);
   $("legend").innerHTML=`<div><b>${li.title}</b>${li.dated?` · ${A.times[Math.min(MAP.day,A.times.length-1)]}`:""}</div>
    <div class="lgrow"><span>${li.lg[0]}</span><span class="lgbar" style="background:linear-gradient(90deg,${samples.map(c=>`rgb(${c.map(Math.round)})`).join(",")})"></span><span>${li.lg[1]}</span></div>
-   <div class="lgnote">${li.note?li.note+" ":""}${chartMode?"Shaded seafloor relief from the bathymetry survey. Italic numbers: depth on knoll and reef tops. ":"White dots: SST fronts (Cayula-Cornillon). Red/blue dashed outlines: warm/cold eddies. "}Black lines: depth contours (more appear as you zoom). Red dashed areas: marine reserves, no fishing. White arrows: surface current${MAP.showWind?"; yellow: wind (kn)":""}. Dashed white: trolling course.</div>`;
+   <div class="lgnote">${li.note?li.note+" ":""}${chartMode?"Shaded seafloor relief from the bathymetry survey. Italic numbers: depth on knoll and reef tops. ":"White dots: SST fronts (Cayula-Cornillon plus strongest-gradient ridges, including hourly Himawari). Red/blue dashed outlines: warm/cold eddies. "}Black lines: depth contours (more appear as you zoom). Red dashed areas: marine reserves, no fishing. White arrows: surface current${MAP.showWind?"; yellow: wind (kn)":""}. Dashed white: trolling course.</div>`;
   navUpdate();}
 
 /* ---------- protected areas (no fishing) ---------- */
@@ -946,7 +952,7 @@ function wpCards(){
     <div class="wpr">Troll ${w.len.toFixed(1)} nm on ${Math.round(w.head).toString().padStart(3,"0")}°/${Math.round((w.head+180)%360).toString().padStart(3,"0")}° ${w.src}. ${w.port.d.toFixed(0)} nm on ${Math.round(w.port.b).toString().padStart(3,"0")}° from ${w.port.nm}.</div></div>`).join("");
   $("wplist").querySelectorAll(".wp").forEach(el=>el.onclick=()=>{MAP.sel=+el.dataset.n;const w=MAP.wps.find(x=>x.n===MAP.sel);MAP.target={n:"WP"+w.n,la:w.lat,lo:w.lon};draw();wpCards();});}
 
-function srcPanel(){$("sources").innerHTML=`<div class="mkhint">${MAP.src.filter(s=>s.ok).length} live data streams, plus moon and sun computed on the device.</div>`+MAP.src.map(s=>`<div class="src"><span class="dot ${s.ok?"ok":s.sample?"smp":"bad"}"></span><div><b>${s.name}</b> <span class="srcm">${s.detail}</span></div></div>`).join("");}
+function srcPanel(){$("sources").innerHTML=`<div class="mkhint">${MAP.src.filter(s=>s.ok).length} live data streams, plus moon and sun computed on the device. Green: current. Amber: stale, so it's left out of the score. Red: unavailable.</div>`+MAP.src.map(s=>`<div class="src"><span class="dot ${s.ok?"ok":s.sample||s.stale?"smp":"bad"}"></span><div><b>${s.name}</b> <span class="srcm">${s.detail}</span></div></div>`).join("");}
 
 function gpx(){const t=new Date().toISOString();
   return`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Bluewater Bite NZ" xmlns="http://www.topografix.com/GPX/1/1">\n`+
@@ -983,10 +989,16 @@ async function loadMap(){
       src.push({ok:1,name:"Bathymetry",detail:BF0.label});}
     else{for(let n=0;n<NN;n++){land[n]=isNaN(S.fields[S.fields.length-1][n])?1:0;depth[n]=land[n]?NaN:500;}src.push({ok:0,name:"Bathymetry",detail:"Unavailable"});}
     S.fields.forEach(f=>{for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;fillGaps(f,land,2);});
+    const sstDay=times[times.length-1],ageOf=o=>o&&o.times?Math.round((Date.parse(sstDay)-Date.parse(o.times[o.times.length-1]))/864e5):99;
+    const chlAge=OJ&&OJ.chl?ageOf(OJ.chl):0,kdAge=OJ&&OJ.kd?ageOf(OJ.kd):0;
+    if(cp&&chlAge>7){src.push({stale:1,name:"Chlorophyll",detail:`Left out: newest image is ${OJ.chl.times[OJ.chl.times.length-1]}, ${chlAge} days old. The morning job is switching to a current source.`});cp=null;MAP.chlStale=1;}
+    if(kp&&kdAge>10){src.push({stale:1,name:"Water clarity",detail:`Left out: newest image is ${OJ.kd.times[0]}, ${kdAge} days old`});kp=null;MAP.kdStale=1;}
+    const sstAge=Math.round((Date.now()-Date.parse(sstDay))/864e5);
+    if(sstAge>2)src.push({stale:1,name:"SST freshness",detail:`Newest daily SST is ${sstDay} (${sstAge} days). NOAA refused the last download; hourly Himawari SST below is newer.`});
     const chl=cp?cp.map(f=>{for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;return fillGaps(f,land,6);}):null;
-    src.push(chl?{ok:1,name:"Chlorophyll",detail:(OJ&&OJ.chl_label)||"NOAA VIIRS gap-filled, 9 km daily"}:{ok:0,name:"Chlorophyll",detail:"Unavailable today"});
+    if(chl)src.push({ok:1,name:"Chlorophyll",detail:`${(OJ&&OJ.chl_label)||"NOAA VIIRS gap-filled, 9 km daily"}, to ${OJ.chl.times[OJ.chl.times.length-1]}`});else if(!MAP.chlStale)src.push({ok:0,name:"Chlorophyll",detail:"Unavailable today"});
     let kd=kp;if(kd){for(let n=0;n<NN;n++)if(land[n])kd[n]=NaN;fillGaps(kd,land,6);}
-    src.push(kd?{ok:1,name:"Water clarity",detail:(OJ&&OJ.kd_label)||"NOAA VIIRS + Sentinel-3 Kd490, 9 km"}:{ok:0,name:"Water clarity",detail:"Unavailable today"});
+    if(kd)src.push({ok:1,name:"Water clarity",detail:`${(OJ&&OJ.kd_label)||"NOAA VIIRS + Sentinel-3 Kd490, 9 km"}, ${OJ.kd.times[0]}`});else if(!MAP.kdStale)src.push({ok:0,name:"Water clarity",detail:"Unavailable today"});
     let sla=hp;const slaLast=OJ&&OJ.sla?OJ.sla.times[OJ.sla.times.length-1]:null,slaAge=slaLast?(Date.parse(times[times.length-1])-Date.parse(slaLast))/864e5:99;if(slaAge>10)sla=null;
     let mu=null,mv=null,eta=null;
     if(mj&&mj.frames){const G=k=>{const f=jsonGrid({lats:mj.lats,lons:mj.lons,values:mj.frames[k]});for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;return fillGaps(f,land,4);};mu=G(0);mv=G(1);eta=G(2);
