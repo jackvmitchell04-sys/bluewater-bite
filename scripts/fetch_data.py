@@ -15,6 +15,27 @@ T0 = time.time()
 def log(*a):
     print(f"[{time.time()-T0:6.1f}s]", *a, flush=True)
 import numpy as np
+import requests as _rq
+
+_rq_get = _rq.get
+
+
+def _get_deadline(url, params=None, timeout=60, **kw):
+    """requests.get with a hard wall-clock limit: a server that trickles bytes can't stall the job for 20 minutes."""
+    limit = timeout if isinstance(timeout, (int, float)) else 120
+    t0 = time.monotonic()
+    r = _rq_get(url, params=params, timeout=(15, min(limit, 60)), stream=True, **kw)
+    buf = []
+    for chunk in r.iter_content(1 << 16):
+        buf.append(chunk)
+        if time.monotonic() - t0 > limit:
+            r.close()
+            raise _rq.Timeout(f"{url.split('/')[2]} took over {limit}s")
+    r._content = b"".join(buf); r._content_consumed = True
+    return r
+
+
+_rq.get = _get_deadline
 import xarray as xr
 from siphon.catalog import TDSCatalog
 
