@@ -260,7 +260,8 @@ function solunar(dayStartUtc,lat,lon){
 /* ---------------- Data ---------------- */
 const MARINE="https://marine-api.open-meteo.com/v1/marine";
 const WX="https://api.open-meteo.com/v1/forecast";
-async function getJSON(url){const r=await fetch(url);if(!r.ok)throw new Error(r.status);return r.json();}
+async function getJSON(url,ms=20000){for(let a=0;a<2;a++){const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);
+  try{const r=await fetch(url,{signal:c.signal});clearTimeout(t);if(!r.ok)throw new Error(r.status);return await r.json();}catch(e){clearTimeout(t);if(a)throw e;await new Promise(r=>setTimeout(r,1500));}}}
 function marineURL(lat,lon,vars){return `${MARINE}?latitude=${lat}&longitude=${lon}&hourly=${vars}&wind_speed_unit=kn&timezone=auto&forecast_days=7`;}
 
 async function loadHotspot(h){
@@ -401,13 +402,23 @@ function closeDetail(){state.open=null;$("sheet").classList.remove("open");}
 $("sheet").onclick=e=>{if(e.target.id==="sheet")closeDetail();};
 
 /* ---------------- Boot ---------------- */
+/* all 12 spots in two requests (Open-Meteo takes many coordinates at once) instead of 96 separate ones */
+async function loadAllSpots(){const o=BREAK_OFFSET,pts=[];
+  for(const h of HOTSPOTS){pts.push([h.lat,h.lon]);for(const[a,b]of[[o,0],[-o,0],[0,o],[0,-o],[o,o],[-o,-o]])pts.push([+(h.lat+a).toFixed(3),+(h.lon+b).toFixed(3)]);}
+  const la=a=>a.map(p=>p[0]).join(","),lo=a=>a.map(p=>p[1]).join(",");
+  const [M,Wx]=await Promise.all([getJSON(`${MARINE}?latitude=${la(pts)}&longitude=${lo(pts)}&hourly=sea_surface_temperature,ocean_current_velocity,wave_height&wind_speed_unit=kn&timezone=auto&forecast_days=7`,30000),
+    getJSON(`${WX}?latitude=${HOTSPOTS.map(h=>h.lat).join(",")}&longitude=${HOTSPOTS.map(h=>h.lon).join(",")}&hourly=wind_speed_10m,pressure_msl&wind_speed_unit=kn&timezone=auto&forecast_days=7`,30000).catch(()=>null)]);
+  const m=Array.isArray(M)?M:[M],w=Wx?(Array.isArray(Wx)?Wx:[Wx]):[];
+  return HOTSPOTS.map((h,k)=>({m:m[k*7],w:w[k]||null,pr:m.slice(k*7+1,k*7+7).filter(x=>x&&x.hourly&&x.hourly.sea_surface_temperature&&x.hourly.sea_surface_temperature.some(v=>v!=null))}));}
 (async function(){
   let ok=0,done=0;
-  await Promise.all(HOTSPOTS.map(async h=>{
-    try{const raw=await loadHotspot(h);DATA[h.id]=buildDays(h,raw);ok++;}catch(e){}
-    done++;$("status").innerHTML=`<span class="spin"></span>Loaded ${done} of ${HOTSPOTS.length} spots...`;
-    if(ok)render();
-  }));
+  try{const all=await loadAllSpots();HOTSPOTS.forEach((h,k)=>{try{DATA[h.id]=buildDays(h,all[k]);ok++;}catch(e){}});}
+  catch(e){// fall back to one spot at a time
+    await Promise.all(HOTSPOTS.map(async h=>{
+      try{const raw=await loadHotspot(h);DATA[h.id]=buildDays(h,raw);ok++;}catch(e){}
+      done++;$("status").innerHTML=`<span class="spin"></span>Loaded ${done} of ${HOTSPOTS.length} spots...`;
+      if(ok)render();
+    }));}
   if(!ok){
     state.sample=true;HOTSPOTS.forEach(h=>DATA[h.id]=sampleDays(h));
     $("banner").style.display="block";
