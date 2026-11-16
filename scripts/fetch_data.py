@@ -1023,7 +1023,7 @@ def truecolour():
             if not got:
                 continue
             mean = img.mean(2); sat_ = img.max(2) - img.min(2)
-            nodata = img.sum(2) < 12                                      # outside the swath: black
+            nodata = img.max(2) <= 3                                      # outside the swath: pure black (clear deep ocean is dark but not 0)
             # clouds and sun glare are bright and grey; sea is dark. Smooth so choices come in patches, not speckle
             bad = np.clip((mean - 70) / 60, 0, 1) * np.clip(1.2 - sat_ / 90, 0.2, 1)
             bad = _box(bad, 4); bad[nodata] = 9
@@ -1034,8 +1034,9 @@ def truecolour():
     if not shots:
         raise RuntimeError("no VIIRS true colour in the last 3 days")
     out = np.zeros((h, w, 3), np.float32); best = np.full((h, w), 99.0); src = np.full((h, w), -1, np.int16)
+    newest_day = max(s["day"] for s in shots)
     for k, s in enumerate(shots):                                         # newest day first; a day only counts where it's clear
-        age = (nz_today - s["day"]).days
+        age = (newest_day - s["day"]).days
         cost = s["bad"] + 0.6 * age                                       # a clear older pixel beats a cloudy new one, not a clear new one
         take = cost < best
         out[take] = s["img"][take]; best[take] = cost[take]; src[take] = k

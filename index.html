@@ -939,7 +939,10 @@ function draw(){
     const tip=$("maptip");tip.style.display="block";const tw=tip.offsetWidth,th=tip.offsetHeight;tip.style.left=Math.min(W-tw-6,Math.max(6,x+12))+"px";tip.style.top=(y-th-12<6?y+14:y-th-12)+"px";}
   else $("maptip").style.display="none";
   $("zoomlbl").textContent=VIEW.z>1.01?`${VIEW.z.toFixed(1)}x`:"";
-  if(li.tc){$("legend").innerHTML=`<div><b>${li.title}</b> · ${TC_SAT.find(x=>x[0]===TC.sat)[1]}, about 1:30pm NZ on ${nzDateStr(TC.ago??1)}${TC.status?` · ${TC.status}`:""}</div>
+  if(li.tc){const fmtD=d=>new Date(d+"T12:00:00").toLocaleDateString("en-NZ",{weekday:"short",day:"numeric",month:"short"}),SN=k=>TC_SAT.find(x=>x[0]===k)[1];
+   const head=TC.auto&&TC.meta?`Clearest view stitched from ${TC.meta.sources.map(u=>`${SN(u.sat)} ${fmtD(u.day)} (${Math.round(u.share*100)}%)`).join(", ")}. Newest photo ${fmtD(TC.meta.newest)}, about 1:30pm; ${Math.round(TC.meta.clear*100)}% of the area cloud-free.`
+     :`${SN(TC.sat)}, about 1:30pm NZ on ${fmtD(nzDateStr(TC.ago??1))}`;
+   $("legend").innerHTML=`<div><b>${li.title}</b> · ${head}${TC.status?` · ${TC.status}`:""}</div>
    <div class="lgnote"><b>How to read it.</b> A real photo, so clouds hide the sea just like they hide SST and chlorophyll; use it on days when those layers are gappy, through any clear patches.<br>
    <b>Deep, dark blue to black</b>: clear oceanic water, the blue water marlin and tuna travel in.<br>
    <b>Lighter, greener or turquoise</b>: plankton-rich or coastal water. A sharp line between this and dark blue is a colour change, often a front; bait and gamefish work the edge, usually on the blue side.<br>
@@ -1160,15 +1163,22 @@ async function loadMap(){
 const setLayer=l=>{MAP.layer=l;document.querySelectorAll(".lyr").forEach(x=>x.classList.toggle("on",x.dataset.l===l));renderFcDays();renderTCBar();};
 /* ---------- true colour: NASA GIBS corrected reflectance, plate carree tiles line up with our lat/lon map ---------- */
 // VIIRS on S-NPP, NOAA-20 and NOAA-21 all cross NZ around 1:30pm local, so the NZ date is the UTC date of the pass
-const TC_SAT=[["NOAA21","NOAA-21"],["NOAA20","NOAA-20"],["SNPP","Suomi NPP"]],TC={sat:"NOAA20",ago:null,tiles:new Map()};
+const TC_SAT=[["NOAA21","NOAA-21"],["NOAA20","NOAA-20"],["SNPP","Suomi NPP"]],TC={auto:true,sat:"NOAA20",ago:null,tiles:new Map(),meta:null,img:null};
+// the morning/hourly job builds the clearest mosaic of the last 3 days from all three satellites (data/truecolour.*)
+fetch("data/truecolour.json",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(m=>{if(!m)return;TC.meta=m;const im=new Image();
+  im.onload=()=>{TC.img=im;if(MAP.layer==="tc")draw();};im.src="data/truecolour.jpg?"+encodeURIComponent(m.updated);}).catch(()=>{});
 function nzDateStr(ago){const t=new Date(Date.now()-ago*864e5);return new Intl.DateTimeFormat("en-CA",{timeZone:NZTZ,year:"numeric",month:"2-digit",day:"2-digit"}).format(t);}
 function tcDefaultAgo(){const h=+new Intl.DateTimeFormat("en-GB",{timeZone:NZTZ,hour:"2-digit",hour12:false}).format(new Date());return h>=17?0:1;}   // today's pass is online by about 5pm
 function renderTCBar(){const el=$("tcbar");if(MAP.layer!=="tc"){el.hidden=true;return;}el.hidden=false;if(TC.ago==null)TC.ago=tcDefaultAgo();
   const day=a=>{const d=new Date(nzDateStr(a)+"T12:00:00");return a===0?"Today":a===1?"Yesterday":d.toLocaleDateString("en-NZ",{weekday:"short",day:"numeric"});};
-  el.innerHTML=[0,1,2,3].map(a=>`<button class="day${TC.ago===a?" on":""}" data-a="${a}">${day(a)}</button>`).join("")+`<span style="width:10px"></span>`+TC_SAT.map(([k,n])=>`<button class="day${TC.sat===k?" on":""}" data-s="${k}">${n}</button>`).join("");
-  el.querySelectorAll("[data-a]").forEach(b=>b.onclick=()=>{TC.ago=+b.dataset.a;renderTCBar();draw();});
-  el.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>{TC.sat=b.dataset.s;renderTCBar();draw();});}
-function drawTC(g,X,Y,V,W){if(TC.ago==null)TC.ago=tcDefaultAgo();const date=nzDateStr(TC.ago),layer=`VIIRS_${TC.sat}_CorrectedReflectance_TrueColor`;
+  el.innerHTML=`<button class="day${TC.auto?" on":""}" data-auto="1">Auto: clearest, newest</button><span style="width:10px"></span>`+[0,1,2,3].map(a=>`<button class="day${!TC.auto&&TC.ago===a?" on":""}" data-a="${a}">${day(a)}</button>`).join("")+`<span style="width:10px"></span>`+TC_SAT.map(([k,n])=>`<button class="day${!TC.auto&&TC.sat===k?" on":""}" data-s="${k}">${n}</button>`).join("");
+  el.querySelector("[data-auto]").onclick=()=>{TC.auto=true;renderTCBar();draw();};
+  el.querySelectorAll("[data-a]").forEach(b=>b.onclick=()=>{TC.auto=false;TC.ago=+b.dataset.a;renderTCBar();draw();});
+  el.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>{TC.auto=false;TC.sat=b.dataset.s;renderTCBar();draw();});}
+function drawTC(g,X,Y,V,W){
+  if(TC.auto&&TC.img&&TC.meta){const m=TC.meta;g.drawImage(TC.img,X(m.lon0),Y(m.lat1),X(m.lon1)-X(m.lon0),Y(m.lat0)-Y(m.lat1));TC.status="";return;}
+  if(TC.auto&&!TC.meta){TC.status="Mosaic not built yet, showing the live NOAA-20 photo.";}
+  if(TC.ago==null)TC.ago=tcDefaultAgo();const date=nzDateStr(TC.ago),layer=`VIIRS_${TC.sat}_CorrectedReflectance_TrueColor`;
   const want=(V.lon1-V.lon0)/W;let z=0;while(z<8&&.5625/2**z>want*1.2)z++;const span=512*.5625/2**z;
   const c0=Math.floor((V.lon0+180)/span),c1=Math.floor((V.lon1+180)/span),r0=Math.floor((90-V.lat1)/span),r1=Math.floor((90-V.lat0)/span);
   let pending=0,failed=0;

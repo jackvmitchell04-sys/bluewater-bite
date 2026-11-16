@@ -1,7 +1,7 @@
 /* Bluewater Bite offline cache: network first, falls back to the last copy saved on the phone. */
 const C = "bwb-v10";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg"];
-const DATA = ["ocean.json", "bathy_hd.json", "bathy_hd.png", "bathy.json", "himawari.json", "currents.json", "forecast.json", "tides.json", "reserves.json", "alerts.json", "model.json", "tiles/index.json"].map(f => "data/" + f);
+const DATA = ["ocean.json", "bathy_hd.json", "bathy_hd.png", "bathy.json", "himawari.json", "currents.json", "forecast.json", "tides.json", "reserves.json", "alerts.json", "model.json", "dumping.json", "truecolour.json", "truecolour.jpg", "tiles/index.json"].map(f => "data/" + f);
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(C).then(c => Promise.all([...SHELL, ...DATA].map(u => c.add(u).catch(() => null)))));
   self.skipWaiting();
