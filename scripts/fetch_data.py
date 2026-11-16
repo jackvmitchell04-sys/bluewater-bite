@@ -911,12 +911,47 @@ def bathy_tiles():
     log("bathy_tiles: wrote", len(tiles), "tiles")
 
 
+# ---------------------------------------------------------------- charted dumping grounds (the "Ammo Dump")
+DUMP_CAT = {"1": "Chemical waste dumping ground", "2": "Nuclear waste dumping ground", "3": "Explosives dumping ground", "4": "Spoil ground", "5": "Vessel dumping ground", "6": "Dumping ground"}
+
+
+def dumping():
+    """LINZ chart dumping-ground polygons (S-57 DMPGRD) in the box, via public ArcGIS mirrors of the LINZ layers."""
+    import requests
+    q = {"where": "1=1", "geometry": f"{BOX['lon0']},{BOX['lat0']},{BOX['lon1']},{BOX['lat1']}", "geometryType": "esriGeometryEnvelope", "inSR": 4326,
+         "spatialRel": "esriSpatialRelIntersects", "outFields": "*", "outSR": 4326, "f": "geojson"}
+    items = []
+    for url in ("https://services3.arcgis.com/fp1tibNcN9mbExhG/ArcGIS/rest/services/Marine_dumping_grounds/FeatureServer/430/query",
+                "https://gis.niwa.co.nz/server/rest/services/Dredge_disposal_areas/MapServer/287/query"):
+        try:
+            g = requests.get(url, params=q, timeout=90).json()
+        except Exception as e:
+            log("dumping:", url.split("/")[2], "failed", str(e)[:80]); continue
+        for ft in g.get("features", []):
+            pr = {k.lower(): v for k, v in (ft.get("properties") or {}).items()}; geom = ft.get("geometry") or {}
+            polys = geom.get("coordinates") or []
+            if geom.get("type") == "Polygon":
+                polys = [polys]
+            rings = [[[round(x, 5), round(y, 5)] for x, y in ring] for poly in polys for ring in poly]
+            if not rings:
+                continue
+            cat = str(pr.get("catdpg") or "").strip()[:1]
+            items.append({"cat": DUMP_CAT.get(cat, pr.get("type1") or "Dumping ground"), "name": pr.get("objnam") or pr.get("nobjnm") or pr.get("location") or "",
+                          "info": " ".join(str(pr.get(k) or "") for k in ("inform", "ninfom", "txtdsc")).strip(), "status": pr.get("status"), "rings": rings})
+        if items:
+            log(f"dumping: {len(items)} areas from {url.split('/')[2]}: " + "; ".join(f"{i['cat']} {i['name']}".strip() for i in items)); break
+    if not items:
+        raise RuntimeError("no dumping grounds found")
+    with open(os.path.join(OUT, "dumping.json"), "w") as f:
+        json.dump({"source": "LINZ nautical chart dumping grounds (S-57 DMPGRD)", "items": items}, f, separators=(",", ":"))
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     ok = 0
     # most important first; slow model downloads are skipped if the morning budget runs out
     only = set(sys.argv[1:])
-    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, reserves, currents, tides, model_grid, forecast):
+    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, reserves, dumping, currents, tides, model_grid, forecast):
         if only and job.__name__ not in only:
             continue
         if job in (model_grid, forecast) and time.time() - T0 > 25 * 60:
