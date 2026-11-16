@@ -1519,10 +1519,14 @@ function planCandidates(P,D,T,all){const out=[],seen=[];const sMax=MAP.scoreMax|
     fish:Math.max(30,w.len/PSET.troll*60),e,w,v:Math.pow(e.s/sMax,2)*(e.inRange?1:.6)});}
   for(const m of allMarks()){if(nearReserve(m.la,m.lo))continue;const e=evalSpot(m.la,m.lo);if(!e)continue;
     add({n:m.n,la:m.la,lo:m.lo,la2:m.la,lo2:m.lo,fish:50,e,ap:m.ap,v:Math.pow(e.s/sMax,2)*(e.inRange?1:.6)*(e.alert?1.1:1)*(m.ap?.95:1)});}
-  const vBest=Math.max(...out.map(c=>c.v),0);let C=all?out:out.filter(c=>c.e.pct>=.5&&c.v>=vBest*.45);
+  let C=out;
+  // heading somewhere: keep stops on the way and around the destination first, then judge them against the best water
+  // in that area (not the whole map), so a quieter area still gets a full day of the best of what's there
   if(D){const dT=hav(P[0],P[1],T.la,T.lo)/NM,brT=brg(P[0],P[1],T.la,T.lo);
     C=C.filter(c=>{const d0=hav(P[0],P[1],c.la,c.lo)/NM,b0=brg(P[0],P[1],c.la,c.lo),along=d0*Math.cos((b0-brT)*RAD),off=Math.abs(d0*Math.sin((b0-brT)*RAD));
       return hav(T.la,T.lo,c.la,c.lo)/NM<=12||(along>0&&along<dT+4&&off<=Math.max(5,dT*.25));});}
+  const vBest=Math.max(...C.map(c=>c.v),0);
+  if(!all)C=C.filter(c=>c.e.pct>=(D?.3:.5)&&c.v>=vBest*(D?.3:.45));
   return C;}
 function schedule(route,P,W){let t=W.leave,pos=P,dist=0;const legs=[];
   for(const c of route){const d=hav(pos[0],pos[1],c.la,c.lo)/NM;dist+=d;t+=d/PSET.cruise*36e5;const a=t;t+=c.fish*6e4;legs.push({c,arr:a,end:t,d});pos=[c.la2,c.lo2];dist+=c.w?c.w.len:0;}
@@ -1546,6 +1550,9 @@ function optimise(C,P,W,forced){let route=forced?[forced]:[];const ok=r=>schedul
     const ranked=S.legs.filter(L=>!(L.c.extra>=300)).map(L=>({L,f:biteBonus(W,L.arr,L.end+Math.min(300,slack)*6e4).f*L.c.v})).sort((a,b)=>b.f-a.f);if(!ranked.length)break;
     const pick=ranked[0].L.c,extra=Math.min(300-(pick.extra||0),slack);
     route=route.map(c=>c===pick?Object.assign(Object.create(Object.getPrototypeOf(c)),c,{fish:c.fish+extra,extra:(c.extra||0)+extra}):c);}
+  // still time left (few good stops near the destination): keep working the best one rather than heading home early
+  {const slack=(W.back-schedule(route,P,W).home)/6e4-20;if(slack>=45&&route.length){const best=route.reduce((a,c)=>c.v>a.v?c:a,route[0]);
+    route=route.map(c=>c===best?Object.assign(Object.create(Object.getPrototypeOf(c)),c,{fish:c.fish+slack,extra:(c.extra||0)+slack}):c);}}
   return route;}
 const ANCHORS=[["Mayor Island",-37.285,176.254,2.1],["Motiti Island",-37.635,176.42,1.3],["Slipper Island",-37.05,175.94,.8],["Alderman Islands",-36.965,176.08,1.0],
  ["Mercury Islands",-36.62,175.86,1.2],["Whale Island (Moutohorā)",-37.86,176.97,.7],["Great Barrier (Port Fitzroy)",-36.16,175.36,0]];

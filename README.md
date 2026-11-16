@@ -21,6 +21,10 @@ Actions tab > "Morning ocean data" > Run workflow.
 | `data/forecast.json` | 5-day SST forecast change (Copernicus Mercator via Open-Meteo) |
 | `data/tides.json` | Hourly model tide for Tauranga, Whitianga, Whakatāne |
 | `data/reserves.json` | DOC marine reserves and Hauraki Gulf high protection areas (Motiti areas are built into the app) |
-| `data/alerts.json` | Marks with a strong front or warm push nearby; also posted as a GitHub issue so you get notified |
+| `data/alerts.json` | Marks with a strong front or warm push nearby |
+| `data/sharp.png` + `.json` | Sharp SST: raw NOAA-20/21 VIIRS passes (ACSPO L2P, 750 m) from the last 36 h, newest pixel wins, levelled to MUR, cloud gaps from MUR; fronts traced at 750 m |
+| `data/l2p_index.json` | Which raw passes cover the Bay (the gridded passes themselves are kept in the GitHub Actions cache) |
+| `data/truecolour.jpg` (+ `_natural`) + `.json` | Clearest true colour view of the newest day from NASA VIIRS (NOAA-20, NOAA-21, Suomi NPP), cloud gaps filled from the other satellites and up to 2 days back; water contrast enhanced |
+| `data/dumping.json` | Charted dumping grounds (LINZ), including the ammunition dumping ground (the Ammo Dump) |
 
 Bite alerts: click **Watch** on the repo (or keep default notifications on) to get each morning's alert by email and in the GitHub app.
