@@ -626,7 +626,7 @@ function scoreField(A,spKey){
     if(A.convAbs&&!isNaN(A.convAbs[n]))parts.push([.08,Math.max(0,Math.min(1,A.convAbs[n]))]);
     if(A.D_kd&&!isNaN(A.D_kd[n]))parts.push([.05*(A.kdAge&&!isNaN(A.kdAge[n])?Math.max(0,1-A.kdAge[n]/6):1),WARM_SP[spKey]?Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):.6]);
     let ws=0,v=0;for(const[w,x]of parts){ws+=w;v+=w*x;}v/=ws;
-    let mod=.2+.8*temp;if(A.anom&&WARM_SP[spKey]&&!isNaN(A.anom[n]))mod*=1+0.08*Math.max(-1,Math.min(1.5,A.anom[n]));
+    const mod=.2+.8*temp;   // the actual temperature vs the species' range; the anomaly vs normal isn't scored
     s[n]=Math.min(1,v*mod);}
   const M=LEARN_ON&&typeof learnModel==="function"?learnModel(spKey):null;
   if(M)for(let n=0;n<NN;n++)if(!isNaN(s[n]))s[n]=Math.min(1,s[n]*learnedFactor(M,A,n));
@@ -699,7 +699,6 @@ function waypoints(A,score,n=WP_N){
     if(A.chlDist&&A.chlDist[p.k]<4)why.push("on a chlorophyll edge");
     if(A.convN&&A.convN[p.k]>.5)why.push("currents converging (bait and weed lines)");else if(A.convN&&A.convN[p.k]<-.5)why.push("upwelling edge");
     if(A.slope&&A.slope[p.k]>.05)why.push("steep slope / canyon wall");
-    if(A.anom&&!isNaN(A.anom[p.k])&&Math.abs(A.anom[p.k])>0.5)why.push(`water ${Math.abs(A.anom[p.k]).toFixed(1)}°C ${A.anom[p.k]>0?"warmer":"cooler"} than usual for this date (2003-2014 average)`);
     return{n:w+1,lat:la,lon:lo,score:Math.round(score[p.k]*100),sst:A.sst[L][p.k],brk:(A.fr[L].g[p.k]||0)*2,depth:A.depth[p.k],
       chl:A.chl?A.chl[A.chl.length-1][p.k]:null,change:A.change[p.k],tag:why.join(", "),line,course,ends:[course[0],course[course.length-1]],head:info.h,along:info.along,warm:info.warm,len,mode,
       src:mode==="front"?"following the temperature break":"following the depth contour",port,cv:courseVal(course,score[p.k])};})
