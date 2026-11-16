@@ -1067,7 +1067,7 @@ async function loadMap(){
     let cur=null,wind=null;
     if(cj&&cj.points&&cj.points.length){cur=cj.points.filter(c=>!onLandRaw(c.lat,c.lon,land)).map(c=>({lat:c.lat,lon:c.lon,v:Math.hypot(c.u,c.v)*1.944,dir:(Math.atan2(c.u,c.v)/RAD+360)%360}));
       wind={pts:cj.points,days:cj.wind_days};
-      src.push({ok:1,name:"True surface currents",detail:`Geostrophic (altimetry) + Ekman wind drift, ${cj.updated.slice(0,16).replace("T"," ")} UTC`});
+      src.push({ok:1,name:"True surface currents",detail:`NOAA blended geostrophic currents + Ekman wind drift (ECMWF), ${cj.updated.slice(0,16).replace("T"," ")} UTC`});
       src.push({ok:1,name:"Wind",detail:"ECMWF IFS 0.25°, last 24 h and 5-day daily means"});}
     else{cur=await curP;src.push(cur?{ok:1,name:"Surface currents",detail:"Copernicus Mercator model via Open-Meteo"}:{ok:0,name:"Surface currents",detail:"Unavailable"});
       src.push({ok:0,name:"Wind (ECMWF)",detail:"Comes from the morning server job"});}
