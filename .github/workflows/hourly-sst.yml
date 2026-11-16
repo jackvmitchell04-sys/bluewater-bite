@@ -1,8 +1,8 @@
-name: Hourly SST refresh
+name: Hourly satellite refresh
 
 on:
   schedule:
-    - cron: "7 */3 * * *"   # every 3 hours: newest Himawari-9 scans
+    - cron: "7 15-23,0-7 * * *"   # hourly 4am to 8pm NZDT: new Himawari scans, MUR, chlorophyll passes, altimetry (NOAA only, no Open-Meteo)
   workflow_dispatch: {}
 
 concurrency:
@@ -21,8 +21,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install xarray netCDF4 siphon numpy requests
-      - run: timeout 15m python scripts/fetch_data.py himawari || echo "ended early"
+      - run: pip install xarray netCDF4 siphon numpy requests pillow tifffile imagecodecs
+      - run: timeout 15m python scripts/fetch_data.py himawari ocean alerts || echo "ended early"
       - name: Save
         if: always()
         run: |

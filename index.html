@@ -162,9 +162,10 @@ ol.plan b.stop{color:var(--accent)}ol.plan{margin:10px 0 6px;padding-left:22px;l
     <div class="banner" id="mapbanner">Live satellite feeds couldn't be reached from this preview, so the map shows a made-up sample ocean. Open the file directly in your browser to get real data.</div>
     <div class="status" id="mapstatus"></div>
     <div class="lyrs">
-      <button class="lyr on" data-l="score">Hotspots</button><button class="lyr" data-l="chart">Chart</button><button class="lyr" data-l="fc">SST forecast</button><button class="lyr" data-l="sst">SST</button><button class="lyr" data-l="front">Fronts</button><button class="lyr" data-l="anom">SST anomaly</button><button class="lyr" data-l="ssh">Sea level / eddies</button><button class="lyr" data-l="chl">Chlorophyll</button><button class="lyr" data-l="clarity">Water clarity</button><button class="lyr" data-l="hima">Hourly SST</button><button class="lyr" data-l="conv">Upwelling / convergence</button><button class="lyr" data-l="curr">Current speed</button><button class="lyr" data-l="change">5-day change</button>
+      <button class="lyr on" data-l="score">Hotspots</button><button class="lyr" data-l="chart">Chart</button><button class="lyr" data-l="fc">SST forecast</button><button class="lyr" data-l="sst">SST</button><button class="lyr" data-l="front">Fronts</button><button class="lyr" data-l="anom">SST anomaly</button><button class="lyr" data-l="ssh">Sea level / eddies</button><button class="lyr" data-l="chl">Chlorophyll</button><button class="lyr" data-l="clarity">Water clarity</button><button class="lyr" data-l="tc">True colour</button><button class="lyr" data-l="hima">Hourly SST</button><button class="lyr" data-l="conv">Upwelling / convergence</button><button class="lyr" data-l="curr">Current speed</button><button class="lyr" data-l="change">5-day change</button>
     </div>
     <div class="days" id="fcdays" hidden></div>
+    <div class="days" id="tcbar" hidden></div>
     <div class="mapwrap"><canvas id="mapcv"></canvas><div id="maptip"></div>
       <div class="zbtns"><button id="zin" title="Zoom in">+</button><button id="zout" title="Zoom out">−</button><button id="zreset" title="Reset view">⤢</button><button id="gps" title="My position">◎</button><span id="zoomlbl"></span></div></div>
     <div class="timebar"><button class="btn" id="play">▶ Play 5 days</button><span>5 days ago</span><input type="range" id="dayslider" min="0" max="5" value="5"><span>Latest</span></div>
@@ -716,6 +717,7 @@ function layerDefs(A){const L=A.sst.length-1,d=Math.min(MAP.day,L);
     conv:A.convN?{f:A.convN,col:v=>ramp(DIV,(v+1)/2),pal:t=>ramp(DIV,t),lg:["Upwelling","Converging"],title:"Surface convergence and upwelling",note:"Red: currents pushing together, which stacks bait, weed and scum lines. Blue: water spreading apart, drawing cooler nutrient-rich water up from below."}:null,
     curr:A.speed?{f:A.speed,col:v=>ramp(CUR,v/1.5),pal:t=>ramp(CUR,t),lg:["0 kn","1.5 kn+"],title:"Surface current speed (24 h mean)"}:null,
     front:{f:A.ccFreqS,col:v=>ramp(FRN,v*2.5),pal:t=>ramp(FRN,t),lg:["Rare","Every day"],title:"Front frequency, last 6 days"},
+    tc:{tc:1,f:null,pal:t=>[20+t*200,60+t*160,120+t*100],lg:["",""],title:"True colour satellite photo (NASA, 375 m VIIRS)"},
     hima:A.hima?{f:A.hima,col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:"Hourly SST, Himawari-9 (cloud gaps dark)"}:null,
     change:{f:A.change,col:v=>ramp(DIV,(v+1.5)/3),pal:t=>ramp(DIV,t),lg:["-1.5°C","+1.5°C"],title:"5-day SST change"},
     chart:MAP.BF&&!A.sample?{f:A.depth,col:v=>chartCol(v)||[214,204,166],pal:t=>chartCol(1+t*1999)||[0,0,0],lg:["0 m","2000 m+"],title:"Chart: depth and seafloor relief",note:MAP.BF.label+"."}:null,
@@ -842,7 +844,8 @@ function draw(){
   const clipOut=()=>{g.beginPath();g.rect(-10,-10,W+20,H+20);for(const t of TL)g.rect(X(t.b.w),Y(t.b.n),X(t.b.e)-X(t.b.w),Y(t.b.s)-Y(t.b.n));g.clip("evenodd");};
   const drawB=(k,op)=>{if(!BI)return;g.save();if(op)g.globalCompositeOperation=op,g.globalAlpha=.5;g.save();clipOut();g.drawImage(BI[k],bx,by,bw,bh);g.restore();
     for(const t of TL)g.drawImage(t.img[k],X(t.b.w),Y(t.b.n),X(t.b.e)-X(t.b.w),Y(t.b.s)-Y(t.b.n));g.restore();};
-  if(MAP.layer==="chart"&&BI)drawB("chart");
+  if(MAP.layer==="tc"){drawB("chart");drawTC(g,X,Y,V,W);}
+  else if(MAP.layer==="chart"&&BI)drawB("chart");
   else{drawB("chart");g.drawImage(dataImage(li,A),X(AREA.lon0-AREA.res/2),Y(AREA.lat1+AREA.res/2),NX*cw,NY*ch);
     if(BI&&MAP.showRelief)drawB("relief","multiply");}
   const inView0=1;// protected areas: no fishing
@@ -923,6 +926,14 @@ function draw(){
     const tip=$("maptip");tip.style.display="block";const tw=tip.offsetWidth,th=tip.offsetHeight;tip.style.left=Math.min(W-tw-6,Math.max(6,x+12))+"px";tip.style.top=(y-th-12<6?y+14:y-th-12)+"px";}
   else $("maptip").style.display="none";
   $("zoomlbl").textContent=VIEW.z>1.01?`${VIEW.z.toFixed(1)}x`:"";
+  if(li.tc){$("legend").innerHTML=`<div><b>${li.title}</b> · ${TC_SAT.find(x=>x[0]===TC.sat)[1]}, about 1:30pm NZ on ${nzDateStr(TC.ago??1)}${TC.status?` · ${TC.status}`:""}</div>
+   <div class="lgnote"><b>How to read it.</b> A real photo, so clouds hide the sea just like they hide SST and chlorophyll; use it on days when those layers are gappy, through any clear patches.<br>
+   <b>Deep, dark blue to black</b>: clear oceanic water, the blue water marlin and tuna travel in.<br>
+   <b>Lighter, greener or turquoise</b>: plankton-rich or coastal water. A sharp line between this and dark blue is a colour change, often a front; bait and gamefish work the edge, usually on the blue side.<br>
+   <b>Brown or tan near the coast</b>: river plumes and stirred-up sediment (Whakatāne, Rangitāiki, Tauranga harbour after rain). Dirty water, normally avoid.<br>
+   <b>Milky pale turquoise swirls offshore</b>: a coccolithophore bloom, not dirty water; it tends to sit in cooler water.<br>
+   <b>Bright white patches near the sun's reflection</b>: sun glint, not a feature. Thin grey haze: cloud edge, ignore it.<br>
+   Swirls and streaks in the colour show eddies and current lines; compare them with the Fronts and Sea level layers.</div>`;navUpdate();return;}
   const samples=[0,.25,.5,.75,1].map(li.pal);
   $("legend").innerHTML=`<div><b>${li.title}</b>${li.dated?` · ${A.times[Math.min(MAP.day,A.times.length-1)]}`:""}</div>
    <div class="lgrow"><span>${li.lg[0]}</span><span class="lgbar" style="background:linear-gradient(90deg,${samples.map(c=>`rgb(${c.map(Math.round)})`).join(",")})"></span><span>${li.lg[1]}</span></div>
@@ -1133,7 +1144,28 @@ async function loadMap(){
   srcPanel();mapUpdate();renderFcDays();renderCatches();}
 
 /* ---------- wiring ---------- */
-const setLayer=l=>{MAP.layer=l;document.querySelectorAll(".lyr").forEach(x=>x.classList.toggle("on",x.dataset.l===l));renderFcDays();};
+const setLayer=l=>{MAP.layer=l;document.querySelectorAll(".lyr").forEach(x=>x.classList.toggle("on",x.dataset.l===l));renderFcDays();renderTCBar();};
+/* ---------- true colour: NASA GIBS corrected reflectance, plate carree tiles line up with our lat/lon map ---------- */
+// VIIRS on S-NPP, NOAA-20 and NOAA-21 all cross NZ around 1:30pm local, so the NZ date is the UTC date of the pass
+const TC_SAT=[["NOAA21","NOAA-21"],["NOAA20","NOAA-20"],["SNPP","Suomi NPP"]],TC={sat:"NOAA20",ago:null,tiles:new Map()};
+function nzDateStr(ago){const t=new Date(Date.now()-ago*864e5);return new Intl.DateTimeFormat("en-CA",{timeZone:NZTZ,year:"numeric",month:"2-digit",day:"2-digit"}).format(t);}
+function tcDefaultAgo(){const h=+new Intl.DateTimeFormat("en-GB",{timeZone:NZTZ,hour:"2-digit",hour12:false}).format(new Date());return h>=17?0:1;}   // today's pass is online by about 5pm
+function renderTCBar(){const el=$("tcbar");if(MAP.layer!=="tc"){el.hidden=true;return;}el.hidden=false;if(TC.ago==null)TC.ago=tcDefaultAgo();
+  const day=a=>{const d=new Date(nzDateStr(a)+"T12:00:00");return a===0?"Today":a===1?"Yesterday":d.toLocaleDateString("en-NZ",{weekday:"short",day:"numeric"});};
+  el.innerHTML=[0,1,2,3].map(a=>`<button class="day${TC.ago===a?" on":""}" data-a="${a}">${day(a)}</button>`).join("")+`<span style="width:10px"></span>`+TC_SAT.map(([k,n])=>`<button class="day${TC.sat===k?" on":""}" data-s="${k}">${n}</button>`).join("");
+  el.querySelectorAll("[data-a]").forEach(b=>b.onclick=()=>{TC.ago=+b.dataset.a;renderTCBar();draw();});
+  el.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>{TC.sat=b.dataset.s;renderTCBar();draw();});}
+function drawTC(g,X,Y,V,W){if(TC.ago==null)TC.ago=tcDefaultAgo();const date=nzDateStr(TC.ago),layer=`VIIRS_${TC.sat}_CorrectedReflectance_TrueColor`;
+  const want=(V.lon1-V.lon0)/W;let z=0;while(z<8&&.5625/2**z>want*1.2)z++;const span=512*.5625/2**z;
+  const c0=Math.floor((V.lon0+180)/span),c1=Math.floor((V.lon1+180)/span),r0=Math.floor((90-V.lat1)/span),r1=Math.floor((90-V.lat0)/span);
+  let pending=0,failed=0;
+  for(let r=r0;r<=r1;r++)for(let c=c0;c<=c1;c++){const key=`${layer}/${date}/${z}/${r}/${c}`;let t=TC.tiles.get(key);
+    if(!t){t={img:new Image(),ok:false,bad:false};t.img.crossOrigin="anonymous";t.img.onload=()=>{t.ok=true;if(MAP.layer==="tc")draw();};t.img.onerror=()=>{t.bad=true;if(MAP.layer==="tc")draw();};
+      t.img.src=`https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/${layer}/default/${date}/250m/${z}/${r}/${c}.jpg`;TC.tiles.set(key,t);
+      if(TC.tiles.size>400)TC.tiles.delete(TC.tiles.keys().next().value);}
+    const w=c*span-180,n=90-r*span;
+    if(t.ok)g.drawImage(t.img,X(w),Y(n),X(w+span)-X(w),Y(n-span)-Y(n));else if(t.bad)failed++;else pending++;}
+  TC.status=failed?"Not available yet for this day (try yesterday or another satellite).":pending?"Loading the satellite photo...":"";}
 document.querySelectorAll(".lyr").forEach(b=>b.onclick=()=>{if(b.disabled)return;setLayer(b.dataset.l);draw();});
 const DATED=["sst","chl","front"];
 $("dayslider").oninput=e=>{MAP.day=+e.target.value;if(!DATED.includes(MAP.layer))setLayer("sst");draw();};

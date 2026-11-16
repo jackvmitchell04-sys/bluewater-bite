@@ -1,5 +1,5 @@
 /* Bluewater Bite offline cache: network first, falls back to the last copy saved on the phone. */
-const C = "bwb-v8";
+const C = "bwb-v9";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg"];
 const DATA = ["ocean.json", "bathy_hd.json", "bathy_hd.png", "bathy.json", "himawari.json", "currents.json", "forecast.json", "tides.json", "reserves.json", "alerts.json", "model.json", "tiles/index.json"].map(f => "data/" + f);
 self.addEventListener("install", e => {
