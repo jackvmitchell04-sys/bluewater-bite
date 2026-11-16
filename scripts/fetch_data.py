@@ -260,7 +260,6 @@ OCEAN = {}   # arrays kept for the jobs that run after ocean()
 
 # ---------------------------------------------------------------- multi-sensor ocean colour composite
 CHL_SOURCES = [   # (dataset, stride, label)  finest first: on the same day the finest sensor wins
-    ("noaacwNPPVIIRSchlaSectorZXDaily", 2, "S-NPP VIIRS 750 m"),
     ("noaacwS3AOLCIchlaDaily", 1, "Sentinel-3A OLCI"),
     ("noaacwS3BOLCIchlaDaily", 1, "Sentinel-3B OLCI"),
     ("thredds:chloraVIIRSn21SectorDailyZX00", 1, "NOAA-21 VIIRS 750 m"),
@@ -268,8 +267,7 @@ CHL_SOURCES = [   # (dataset, stride, label)  finest first: on the same day the 
     ("noaacwN20VIIRSchlaDaily", 1, "NOAA-20 VIIRS"),
 ]
 KD_SOURCES = [("thredds:kd490VIIRSn21SectorDailyZX00", 1, "NOAA-21 VIIRS 750 m"),
-              ("thredds:kd490VIIRSn20SectorDailyZX00", 1, "NOAA-20 VIIRS 750 m"),
-              ("noaacwNPPVIIRSkd490SectorZXDaily", 2, "S-NPP VIIRS 750 m")]   # S-NPP ended 2 Nov 2026; kept in case of reprocessing
+              ("thredds:kd490VIIRSn20SectorDailyZX00", 1, "NOAA-20 VIIRS 750 m")]   # S-NPP ended 2 Nov 2026
 SECTOR_CACHE = os.environ.get("SECTOR_CACHE", os.path.join(os.path.dirname(__file__), "..", ".cache", "sector"))
 
 
@@ -300,14 +298,24 @@ def thredds_sector_frames(root, var, d0, pad=0.05, res=0.0075):
         else:
             try:
                 nc = netCDF4.Dataset(f"{B}/dodsC/{root}/{f}")
-                st = 40
-                sla = np.ma.filled(nc.variables["swath_latitude"][0, 0, ::st, ::st].astype(float), np.nan)
-                slo = np.ma.filled(nc.variables["swath_longitude"][0, 0, ::st, ::st].astype(float), np.nan)
-                m = (sla > la0) & (sla < la1) & (slo > lo0) & (slo < lo1)
-                if not m.any():
-                    nc.close(); continue
-                jj, ii = np.where(m); R, C = nc.variables["swath_latitude"].shape[-2:]
-                r0, r1, c0, c1 = max(0, (jj.min() - 1) * st), min(R, (jj.max() + 2) * st), max(0, (ii.min() - 1) * st), min(C, (ii.max() + 2) * st)
+                # every ZX00 file is on the same fixed sector grid: find the Bay once (lat/lon are blanked under cloud,
+                # so look in whichever file has them) and reuse that block for all files and products
+                bf = os.path.join(SECTOR_CACHE, "ZX00_block.json")
+                blk = json.load(open(bf)) if os.path.exists(bf) else None
+                R, C = nc.variables["swath_latitude"].shape[-2:]
+                if blk and blk.get("shape") == [int(R), int(C)]:
+                    r0, r1, c0, c1 = blk["block"]
+                else:
+                    st = 20
+                    sla = np.ma.filled(nc.variables["swath_latitude"][0, 0, ::st, ::st].astype(float), np.nan)
+                    slo = np.ma.filled(nc.variables["swath_longitude"][0, 0, ::st, ::st].astype(float), np.nan)
+                    m = (sla > la0) & (sla < la1) & (slo > lo0) & (slo < lo1)
+                    if not m.any():
+                        nc.close(); continue
+                    jj, ii = np.where(m)
+                    r0, r1, c0, c1 = int(max(0, (jj.min() - 3) * st)), int(min(R, (jj.max() + 4) * st)), int(max(0, (ii.min() - 3) * st)), int(min(C, (ii.max() + 4) * st))
+                    if slo[m].min() < lo0 + .15 and slo[m].max() > lo1 - .15 and sla[m].min() < la0 + .15 and sla[m].max() > la1 - .15:   # whole Bay seen
+                        json.dump({"shape": [int(R), int(C)], "block": [r0, r1, c0, c1]}, open(bf, "w"))
                 v = np.ma.filled(nc.variables[var][0, 0, r0:r1, c0:c1].astype(float), np.nan)
                 la_ = np.ma.filled(nc.variables["swath_latitude"][0, 0, r0:r1, c0:c1].astype(float), np.nan)
                 lo_ = np.ma.filled(nc.variables["swath_longitude"][0, 0, r0:r1, c0:c1].astype(float), np.nan)
