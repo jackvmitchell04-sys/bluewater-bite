@@ -129,6 +129,10 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
 .ct{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:6px;font-size:13px}.ct .h{display:flex;gap:8px;align-items:center}.ct .h b{color:#ff8a70}.ct .del{margin-left:auto;background:none;border:0;color:var(--muted);font-size:16px;cursor:pointer}
 .cstats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}.cstats div{background:#0a1d33;border:1px solid var(--line);border-radius:10px;padding:7px 9px;font-size:12.5px;color:#c9dbee}.cstats small{display:block;color:var(--muted)}
 #fcdays{margin:-2px 0 8px}
+.planbox{border-color:#2a6d8f;background:linear-gradient(180deg,#0d2a44,#0b2238)}.planhead{font-size:16px;margin-bottom:8px}.planhead b{color:#fff}#skname{border-bottom:1px dashed var(--muted);cursor:pointer}
+.planrow{display:flex;gap:8px}.planrow input{flex:1;background:#0a1d33;border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px;font-size:15px}
+.pc{cursor:pointer}.pc:hover{border-color:var(--accent)}#homeport{background:#0a1d33;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px}
+ol.plan{margin:10px 0 6px;padding-left:22px;line-height:1.5;font-size:14.5px}ol.plan li{margin-bottom:7px}ol.plan b{color:var(--accent)}
 </style>
 </head>
 <body>
@@ -142,6 +146,7 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
   <div class="tabs"><button class="tab on" data-t="spots">Spots</button><button class="tab" data-t="map">Hotspot map</button></div>
   <div class="controls"><select id="species"></select></div>
   <div class="offline" id="offline" hidden></div>
+  <div class="moon planbox" id="planbox"></div>
   <div class="moon" id="moonpanel"></div>
   <div class="moon" id="baropanel"></div>
   <div class="moon" id="tidepanel"></div>
@@ -158,7 +163,6 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
       <button class="lyr on" data-l="score">Hotspots</button><button class="lyr" data-l="chart">Chart</button><button class="lyr" data-l="fc">SST forecast</button><button class="lyr" data-l="sst">SST</button><button class="lyr" data-l="front">Fronts</button><button class="lyr" data-l="anom">SST anomaly</button><button class="lyr" data-l="ssh">Sea level / eddies</button><button class="lyr" data-l="chl">Chlorophyll</button><button class="lyr" data-l="clarity">Water clarity</button><button class="lyr" data-l="hima">Hourly SST</button><button class="lyr" data-l="conv">Upwelling / convergence</button><button class="lyr" data-l="curr">Current speed</button><button class="lyr" data-l="change">5-day change</button>
     </div>
     <div class="days" id="fcdays" hidden></div>
-    <div class="alertbox" id="alertbox" hidden></div>
     <div class="mapwrap"><canvas id="mapcv"></canvas><div id="maptip"></div>
       <div class="zbtns"><button id="zin" title="Zoom in">+</button><button id="zout" title="Zoom out">−</button><button id="zreset" title="Reset view">⤢</button><button id="gps" title="My position">◎</button><span id="zoomlbl"></span></div></div>
     <div class="timebar"><button class="btn" id="play">▶ Play 5 days</button><span>5 days ago</span><input type="range" id="dayslider" min="0" max="5" value="5"><span>Latest</span></div>
@@ -873,6 +877,7 @@ function draw(){
   g.font="11px sans-serif";for(const[nm,la,lo]of PORTS){const x=X(lo),y=Y(la);if(!inView(x,y))continue;g.fillStyle=chartMode?"#222":"#fff";g.beginPath();g.arc(x,y,2.5,0,7);g.fill();g.fillStyle=chartMode?"#1a1a1a":"rgba(255,255,255,.9)";g.fillText(nm,x+4,la<-37.85?y-5:y+12);}
   drawMarks(g,X,Y,W,H);
   drawCatches(g,X,Y,inView);
+  drawPlan(g,X,Y);
   for(const w of MAP.wps){const sel=MAP.sel===w.n,show=sel||VIEW.z>=2||MAP.wps.length<=8;
     if(show){g.setLineDash([3,4]);g.strokeStyle=chartMode?"rgba(11,42,85,.6)":"rgba(255,255,255,.55)";g.lineWidth=1.2;g.beginPath();w.line.forEach((p,k)=>k?g.lineTo(X(p[1]),Y(p[0])):g.moveTo(X(p[1]),Y(p[0])));g.stroke();g.setLineDash([]);
       g.strokeStyle=sel?"#ffb547":chartMode?"#0b2a55":"#fff";g.lineWidth=sel?2.6:1.8;g.beginPath();w.course.forEach((p,k)=>k?g.lineTo(X(p[1]),Y(p[0])):g.moveTo(X(p[1]),Y(p[0])));g.stroke();
@@ -1033,7 +1038,7 @@ async function loadMap(){
     const blk=o=>({times:o.times,fields:o.frames.map(v=>jsonGrid({lats:o.lats,lons:o.lons,values:v}))});
     const curP=loadOpenMeteoCurrents().catch(()=>null);
     const [OJ,BF0,hj,mj,cj,fj,rj,aj]=await Promise.all([local("ocean.json"),loadFineBathy(),local("himawari.json"),local("model.json"),local("currents.json"),local("forecast.json"),local("reserves.json"),local("alerts.json")]);
-    setReserves(rj);renderAlerts(aj);MAP.updated=OJ&&OJ.updated;
+    setReserves(rj);window.ALERTS=aj;MAP.updated=OJ&&OJ.updated;
     MAP.BF=BF0;
     let S,times,cp=null,kp=null,hp=null,clp=null;
     if(OJ&&OJ.sst){S=blk(OJ.sst);times=S.times;cp=OJ.chl?blk(OJ.chl).fields:null;kp=OJ.kd?blk(OJ.kd).fields[0]:null;hp=OJ.sla?blk(OJ.sla).fields:null;clp=OJ.clim?blk(OJ.clim).fields[0]:null;}
@@ -1176,7 +1181,7 @@ function renderMoon(){
   const hm=t=>{const s_=nzTime(t).replace(/\s/g,"").toLowerCase();return{t:s_.replace(/(am|pm)$/,""),ap:s_.slice(-2)};};
   const rng=(a,b)=>{const x=hm(a),y=hm(b);return x.ap===y.ap?`${x.t}-${y.t}${y.ap}`:`${x.t}${x.ap}-${y.t}${y.ap}`;};
   const dayFrom=sr?sr.t-36e5:day0,dayTo=ss?ss.t+36e5:day0+864e5;
-  const bite=ev.filter(e=>e.type!=="Sun"&&e.t+e.dur*30e3>dayFrom&&e.t-e.dur*30e3<dayTo).map(e=>rng(e.t-e.dur*30e3,e.t+e.dur*30e3));
+  const bite=window.__b=ev.filter(e=>e.type!=="Sun"&&e.t+e.dur*30e3>dayFrom&&e.t-e.dur*30e3<dayTo).map(e=>rng(e.t-e.dur*30e3,e.t+e.dur*30e3));
   const nn=nextPhase(0),nf=nextPhase(.5);
   $("moonpanel").innerHTML=`<div class="moonhead">${moonSVG(p)}<div><div class="ph">${name}<span class="rate ${cls}">${rate}</span></div><div class="il">${ill}% lit · moon age ${age.toFixed(1)} days · ${nzDate(day0+43200e3)}</div></div>
     <div class="mtog"><button data-d="0" class="${moonDay===0?"on":""}">Today</button><button data-d="1" class="${moonDay===1?"on":""}">Tomorrow</button></div></div>
@@ -1185,7 +1190,7 @@ function renderMoon(){
     ${rows||'<div class="bw">No solunar periods this day</div>'}
     <div class="bite"><span>Bite times</span><b>${bite.length?(bite.length>1?bite.slice(0,-1).join(", ")+" and "+bite[bite.length-1]:bite[0]):"None in daylight"}</b></div>
     <div class="next">Sunrise ${sr?nzTime(sr.t):"n/a"} · Sunset ${ss?nzTime(ss.t):"n/a"} · Next new moon ${nn?nzDate(nn):"n/a"} · Next full moon ${nf?nzDate(nf):"n/a"} · Times for the Bay of Plenty (NZ time)</div>`;
-  $("moonpanel").querySelectorAll(".mtog button").forEach(b=>b.onclick=()=>{moonDay=+b.dataset.d;renderMoon();});renderTides();renderBaro();}
+  $("moonpanel").querySelectorAll(".mtog button").forEach(b=>b.onclick=()=>{moonDay=+b.dataset.d;renderMoon();});renderTides();renderBaro();if(moonDay===0)window.BITE_TODAY=window.__b;}
 
 /* ---------- Barometer (ECMWF via Open-Meteo, offshore Bay of Plenty) ----------
    Shown as a weather-change indicator, not used in the hotspot score: the evidence that pressure itself drives
@@ -1312,6 +1317,109 @@ $("catchcsv").onclick=()=>{const h=["time_utc","lat","lon","species","kg","relea
   const rows=CATCHES.map(c=>[c.t,c.la.toFixed(5),c.lo.toFixed(5),c.spn,c.kg??"",c.rel?"yes":"no",c.sst?.toFixed(2)??"",c.anom?.toFixed(2)??"",c.dep!=null?Math.round(c.dep):"",c.front?.toFixed(2)??"",c.chl?.toFixed(3)??"",c.moon,c.age,c.sol,c.tide?`${c.tide.txt} ${c.tide.port}`:"",c.baro?c.baro.p:"",c.baro?c.baro.d3:"",`"${(c.note||"").replace(/"/g,"'")}"`].join(","));
   const b=new Blob([[h.join(","),...rows].join("\n")],{type:"text/csv"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="bluewater-bite-catches.csv";document.body.appendChild(a);a.click();a.remove();};
 renderCatches();
+
+/* ---------- Today's plan: "where are you heading, skipper?" ----------
+   Reads the destination (island, area or mark name) and departure port from plain text, then builds a plan from
+   today's hotspot analysis: where to put the lures out, marks worth trolling over on the way, the best mark at the
+   destination, a backup, and today's wind, tide, bite times and pressure. */
+const AREAS=[["Mayor Island",-37.285,176.254,["mayor","tuhua","tūhua"]],["Motiti Island",-37.635,176.42,["motiti"]],["White Island",-37.52,177.183,["white island","whakaari","white"]],
+ ["Alderman Islands",-36.965,176.08,["alderman","aldermen","aldermans","aldies"]],["Mercury Islands",-36.62,175.86,["mercury","mercs","mercuries"]],["Slipper Island",-37.05,175.94,["slipper"]],
+ ["Plate Island",-37.655,176.555,["plate","motunau"]],["Rurima Rocks",-37.83,176.88,["rurima"]],["Cuvier Island",-36.43,175.77,["cuvier"]],["Great Barrier Island",-36.2,175.45,["barrier","gbi"]],
+ ["Cape Runaway",-37.53,177.98,["runaway"]],["Shoe Island",-37.0,175.92,["shoe"]],["Mercury Bay",-36.8,175.8,["mercury bay"]]];
+const PORT_ALIAS={"Tauranga":["tauranga","the mount","mount","mt maunganui","maunganui","mt"],"Whakatane":["whakatane","whakatāne","whaka"],"Whitianga":["whitianga","whitty"],"Tairua":["tairua","pauanui"],
+ "Whangamata":["whangamata","whangamatā"],"Opotiki":["opotiki","ōpōtiki"],"Te Kaha":["te kaha"],"Port Fitzroy":["fitzroy","port fitzroy"]};
+const PORT_EXIT={"Tauranga":"the Mount entrance","Whakatane":"the Whakatāne bar","Whitianga":"the Whitianga harbour mouth","Tairua":"the Tairua bar","Whangamata":"the Whangamatā bar","Opotiki":"the Ōpōtiki bar","Te Kaha":"Te Kaha","Port Fitzroy":"Port Fitzroy"};
+const GENERIC=new Set(["knoll","knolls","reef","rock","rocks","shoal","shoals","bank","channel","trench","hill","seamount","rise","patch","island","islands","the","skipper","gps","area","outer","trough","middle","ground"]);
+const comp16=b=>["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"][Math.round(((b%360)+360)%360/22.5)%16];
+const p3=x=>String(Math.round((x+360)%360)).padStart(3,"0");
+let SKIPPER="Jack",HOMEPORT="Tauranga";try{SKIPPER=localStorage.getItem("bwb-skipper")||"Jack";HOMEPORT=localStorage.getItem("bwb-home")||"Tauranga";}catch(e){}
+function placeIndex(){const L=[];
+  for(const[n,la,lo,al]of AREAS)L.push({n,la,lo,keys:al,kind:"area"});
+  for(const m of allMarks()){const words=m.n.toLowerCase().replace(/[()/≈]/g," ").split(/\s+/).filter(w=>w.length>=4&&!GENERIC.has(w));
+    const extra=[...(m.n.match(/\(([^)]+)\)/)||[,""])[1].toLowerCase().split(/,| or /)].map(x=>x.trim().replace(/^the /,"")).filter(Boolean);
+    L.push({n:m.n,la:m.la,lo:m.lo,keys:[m.n.toLowerCase(),...words,...extra],kind:"mark",ap:m.ap});}
+  return L;}
+function parsePlace(text){const t=" "+text.toLowerCase().replace(/[^a-zāēīōū0-9 ]/g," ")+" ",has=k=>t.includes(" "+k+" ")||(k.length>5&&t.includes(k));
+  let from=null;for(const[p,al]of Object.entries(PORT_ALIAS)){const hit=al.find(a=>has(a));if(hit){const i=t.indexOf(hit);const before=t.slice(Math.max(0,i-12),i);if(/(from|out of|leaving|launch|launching)\s*$/.test(before)||/(from|out of|leaving)/.test(before))from=p;}}
+  const cands=[];for(const p of placeIndex()){let sc=0;for(const k of p.keys)if(has(k))sc=Math.max(sc,k.split(" ").length+(k===p.n.toLowerCase()?2:0));
+    if(sc){const qual=["knoll","knolls","reef","rock","rocks","shoal","bank","channel","trench","rise","hill","seamount"].filter(g=>t.includes(" "+g)&&p.n.toLowerCase().includes(g)).length;cands.push({p,sc:sc+qual*1.5+(p.kind==="area"&&!qual?.5:0)});}}
+  cands.sort((a,b)=>b.sc-a.sc);return{dest:cands[0]?cands[0].p:null,alts:cands.slice(1,4).map(c=>c.p.n),from};}
+/* how good is the water at and around a point today */
+function evalSpot(la,lo,r=1.5){const A=MAP.A,S=MAP.score,L=A.sst.length-1;let best=-1,bk=-1;
+  const ri=Math.ceil(r*NM/(AREA.res*KM*Math.cos(la*RAD))),rj=Math.ceil(r*NM/(AREA.res*KM)),i0=Math.round((lo-AREA.lon0)/AREA.res),j0=Math.round((AREA.lat1-la)/AREA.res);
+  for(let j=j0-rj;j<=j0+rj;j++)for(let i=i0-ri;i<=i0+ri;i++){if(i<0||j<0||i>=NX||j>=NY)continue;const n=ix(i,j);if(A.land[n]||isNaN(S[n]))continue;if(RESMASK&&RESMASK[n])continue;if(S[n]>best){best=S[n];bk=n;}}
+  if(bk<0)return null;const sea=[...S].filter(v=>!isNaN(v)).sort((a,b)=>a-b),pct=sea.findIndex(v=>v>=best)/sea.length;
+  const why=[],fd=A.frontDist[bk],sst=A.sst[L][bk],sp=SPECIES[state.sp];
+  if(fd<2)why.push(`a temperature break right there (${((A.fr[L].g[bk]||0)*2).toFixed(2)}°C per 2 km)`);else if(fd<6)why.push(`a temperature break ${(fd/1.852).toFixed(1)} nm away`);
+  if(A.chlDist&&A.chlDist[bk]<3)why.push("a colour change (chlorophyll edge)");
+  if(A.convN&&A.convN[bk]>.5)why.push("currents converging, good for bait and weed lines");
+  if(A.warmDist&&A.warmDist[bk]<10)why.push("the edge of a warm eddy");
+  if(A.slope&&A.slope[bk]>.05)why.push("a steep drop-off");
+  const al=(window.ALERTS&&ALERTS.items||[]).find(x=>hav(x.lat,x.lon,la,lo)/NM<1.5);
+  return{s:best,pct,n:bk,la:latOf((bk-bk%NX)/NX),lo:lonOf(bk%NX),sst,inRange:sst>=sp.min&&sst<=sp.max,why,alert:al};}
+function nearReserve(la,lo,nm=.6){if(reserveAt(la,lo))return true;for(let k=0;k<8;k++){const a=k*45*RAD,d=nm/60;if(reserveAt(la+Math.cos(a)*d,lo+Math.sin(a)*d/Math.cos(la*RAD)))return true;}return false;}
+function suits(t){return Object.values(SPECIES).filter(x=>t>=x.min&&t<=x.max).map(x=>x.name).slice(0,3);}
+function windAt(la,lo){const W=MAP.A&&MAP.A.wind;if(!W)return null;const p=W.pts.map(q=>({q,d:hav(q.lat,q.lon,la,lo)})).sort((a,b)=>a.d-b.d)[0].q;
+  const today=new Date(Date.now()+nzOffsetMs(Date.now())).toISOString().slice(0,10),k=Math.max(0,(W.days||[]).indexOf(today)),w=p.wd&&p.wd[k]?p.wd[k]:[p.wu,p.wv];
+  const kn=Math.hypot(w[0],w[1])*1.944,from=(Math.atan2(-w[0],-w[1])/RAD+360)%360;return{kn,from};}
+function routeDepthOut(P,T,depth=100){const d=hav(P[0],P[1],T[0],T[1])/NM;for(let x=.5;x<d;x+=.5){const f=x/d,la=P[0]+(T[0]-P[0])*f,lo=P[1]+(T[1]-P[1])*f,c=conditionsAt(la,lo);if(c.dep>=depth)return x;}return null;}
+async function makePlan(text){const out=$("planout");out.innerHTML=`<div class="mkhint">Reading today's water...</div>`;
+  if(!MAP.ready){if(!MAP.loading)loadMap();await new Promise(r=>{const t=setInterval(()=>{if(MAP.ready){clearInterval(t);r();}},300);});}
+  resMask();const q=parsePlace(text),kw=q.dest?q.dest.keys.filter(k=>k.length>=4&&!GENERIC.has(k)):[];
+  if(!q.dest){out.innerHTML=`<div class="why">I couldn't match a place in "${text.replace(/[<>&]/g,"")}". Try an island or mark name, e.g. <i>Mayor</i>, <i>Motiti</i>, <i>the Rangas</i>, <i>White Island</i>, <i>Alderman Islands</i>.</div>`;return;}
+  const fromN=q.from||HOMEPORT,port=PORTS.find(p=>p[0]===fromN)||PORTS.find(p=>p[0]==="Tauranga"),P=[port[1],port[2]],exit=PORT_EXIT[port[0]]||port[0],D=q.dest;
+  // candidate targets around the destination: marks and waypoints within 8 nm (or the mark itself)
+  // marks near the destination (or sharing its name, e.g. "mayor" -> Mayor Knolls) and hotspot waypoints within 10 nm
+  const near=[];for(const m of allMarks()){const d=hav(D.la,D.lo,m.la,m.lo)/NM,named=D.kind==="area"&&kw.some(k=>m.n.toLowerCase().includes(k));
+    if((d<=10||(named&&d<=18))&&!nearReserve(m.la,m.lo)){const e=evalSpot(m.la,m.lo);if(e)near.push({n:m.n,la:m.la,lo:m.lo,e,ap:m.ap,self:d<.3,named});}}
+  for(const w of MAP.wps){const d=hav(D.la,D.lo,w.lat,w.lon)/NM;if(d<=10){const e=evalSpot(w.lat,w.lon,1);if(e)near.push({n:`WP${w.n}`,la:w.lat,lo:w.lon,e,wp:w});}}
+  if(!near.some(x=>!x.wp)){const e=evalSpot(D.la,D.lo,4);if(e){const dd=hav(D.la,D.lo,e.la,e.lo)/NM;near.push({n:dd<.5?`the water off ${D.n}`:`the water ${dd.toFixed(1)} nm ${comp16(brg(D.la,D.lo,e.la,e.lo))} of ${D.n}`,la:e.la,lo:e.lo,e,area:1});}}
+  const rank=x=>x.e.s*(x.named?1.08:1)*(x.e.alert?1.05:1);near.sort((a,b)=>rank(b)-rank(a));
+  let T=near[0],better=null;const own=near.find(x=>x.self&&D.kind==="mark");
+  if(own){T=own;const alt=near.filter(x=>x!==own).sort((a,b)=>b.e.s-a.e.s)[0];if(alt&&alt.e.s>own.e.s*1.1)better=alt;}
+  const backup=better||near.find(x=>x!==T&&hav(x.la,x.lo,T.la,T.lo)/NM>1.5);
+  // marks worth towing over on the way
+  const dTot=hav(P[0],P[1],T.la,T.lo)/NM,brT=brg(P[0],P[1],T.la,T.lo),way=[];
+  for(const m of allMarks()){if(near.some(x=>x.n===m.n))continue;const d0=hav(P[0],P[1],m.la,m.lo)/NM,b0=brg(P[0],P[1],m.la,m.lo),along=d0*Math.cos((b0-brT)*RAD),off=Math.abs(d0*Math.sin((b0-brT)*RAD));
+    if(along<1.5||along>dTot-1.5||off>Math.max(2.5,dTot*.12)||nearReserve(m.la,m.lo))continue;const e=evalSpot(m.la,m.lo);if(e&&e.pct>=.55)way.push({n:m.n,la:m.la,lo:m.lo,e,along,ap:m.ap});}
+  way.sort((a,b)=>b.e.s-a.e.s);const ways=way.slice(0,2).sort((a,b)=>a.along-b.along);
+  const lureOut=routeDepthOut(P,[(ways[0]||T).la,(ways[0]||T).lo]);
+  const leg=(a,b)=>`${(hav(a[0],a[1],b[0],b[1])/NM).toFixed(1)} nm on ${p3(brg(a[0],a[1],b[0],b[1]))}°T`;
+  const reason=e=>`${e.sst.toFixed(1)}°C${e.inRange?"":` (outside the ${SPECIES[state.sp].name.toLowerCase()} range${suits(e.sst).length?`; suits ${suits(e.sst).join(", ")}`:""})`}${e.why.length?", with "+e.why.slice(0,2).join(" and "):""}${e.alert?". It was flagged in this morning's scan":""}`;
+  const steps=[];let prev=P;
+  if(ways.length){const w=ways[0];steps.push(`As you leave ${exit}, ${lureOut!=null?`put the lures out once you cross the 100 m line (about ${lureOut.toFixed(0)} nm out) and `:""}tow your lures over <b>${w.n}</b>${w.ap&&!/\(area\)/.test(w.n)?" (approximate position)":""}, ${leg(prev,[w.la,w.lo])}: ${reason(w.e)}.`);prev=[w.la,w.lo];
+    if(ways[1]){const w2=ways[1];steps.push(`Carry on over <b>${w2.n}</b>, ${leg(prev,[w2.la,w2.lo])}: ${reason(w2.e)}.`);prev=[w2.la,w2.lo];}}
+  else steps.push(`As you leave ${exit}, ${lureOut!=null?`put the lures out at the 100 m line (about ${lureOut.toFixed(0)} nm out). There's`:"there's"} no standout water on the way, so ${dTot>12?"run at cruising speed":"troll at speed"} toward ${D.n}.`);
+  steps.push(`Work <b>${T.n}</b>${T.wp?` (hotspot waypoint near ${D.n})`:""}, ${leg(prev,[T.la,T.lo])}: ${reason(T.e)}.${T.wp?` Troll the ${T.wp.len.toFixed(1)} nm zig-zag course from ${fmtLL(T.wp.course[0][0],T.wp.course[0][1])}.`:""}`);
+  if(backup)steps.push(`${better?"Better water nearby today: if it's quiet, move to":"If nothing's there, head to"} <b>${backup.n}</b>, ${leg([T.la,T.lo],[backup.la,backup.lo])}: ${reason(backup.e)}.`);
+  const top=MAP.wps[0];let heads="";if(top&&T.e.s<top.s/100*MAP.scoreMax*.8){const ev=evalSpot(top.lat,top.lon,1);if(ev&&ev.s>T.e.s*1.25)heads=`Heads up: the best water on the whole map today is <b>WP1</b>, ${leg(P,[top.lat,top.lon])} from ${port[0]} (${top.tag.toLowerCase()}).`;}
+  const res=RESERVES.filter(r=>hav(D.la,D.lo,(r.bb[1]+r.bb[3])/2,(r.bb[0]+r.bb[2])/2)/NM<6).map(r=>r.short);
+  const w=windAt(T.la,T.lo),b=typeof baroAt==="function"?baroAt(Date.now()):null;
+  let tide="";if(TIDES){const tp=TIDES.ports.map(x=>({x,d:hav(x.lat,x.lon,P[0],P[1])})).sort((a,b)=>a.d-b.d)[0].x,ev=(tp.ev||[]).filter(e=>e.t>Date.now()).slice(0,2);if(ev.length)tide=`Tide at ${tp.name.replace("Whakatane","Whakatāne")}: ${ev.map(e=>`${e.type==="H"?"high":"low"} ${nzTime(e.t)}`).join(", ")}.`;}
+  const cond=[w?`Wind ${Math.round(w.kn)} kn from the ${comp16(w.from)} out there today (ECMWF).`:"",tide,window.BITE_TODAY&&BITE_TODAY.length?`Bite times: ${BITE_TODAY.join(", ")}.`:"",b?`Barometer ${Math.round(b.p)} hPa, ${b.trend}.`:"",res.length?`⛔ No fishing in ${res.join(", ")}.`:""].filter(Boolean).join(" ");
+  MAP.plan={pts:[[P[0],P[1],port[0]],...ways.map(w=>[w.la,w.lo,w.n]),[T.la,T.lo,T.n],...(backup?[[backup.la,backup.lo,backup.n]]:[])]};
+  out.innerHTML=`<ol class="plan">${steps.map(s=>`<li>${s}</li>`).join("")}</ol>${heads?`<div class="why">${heads}</div>`:""}<div class="next" style="margin-top:6px">${cond}</div>
+    <div class="srcm">Scored for ${SPECIES[state.sp].name} from satellite data for ${MAP.A.times[MAP.A.times.length-1]}${q.alts.length?`. Also matched: ${q.alts.join(", ")}`:""}.</div>
+    <div class="actions"><button class="btn pri" id="planmap">Show on map</button><button class="btn" id="plannav">Navigate to first stop</button><button class="btn" id="plangpx">Download route (GPX)</button></div>`;
+  $("planmap").onclick=()=>{document.querySelector('.tab[data-t="map"]').click();const la=MAP.plan.pts.map(p=>p[0]),lo=MAP.plan.pts.map(p=>p[1]);
+    VIEW.clat=(Math.min(...la)+Math.max(...la))/2;VIEW.clon=(Math.min(...lo)+Math.max(...lo))/2;VIEW.z=Math.max(1,Math.min(8,.9*Math.min((AREA.lon1-AREA.lon0)/(Math.max(...lo)-Math.min(...lo)+.08),(AREA.lat1-AREA.lat0)/(Math.max(...la)-Math.min(...la)+.08))));redraw();$("mapcv").scrollIntoView({behavior:"smooth"});};
+  $("plannav").onclick=()=>{const p=MAP.plan.pts[1];setTarget(p[2],p[0],p[1]);$("planmap").click();};
+  $("plangpx").onclick=()=>{const x=`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Bluewater Bite NZ" xmlns="http://www.topografix.com/GPX/1/1"><rte><name>Today ${D.n}</name>${MAP.plan.pts.map((p,k)=>`<rtept lat="${p[0].toFixed(5)}" lon="${p[1].toFixed(5)}"><name>${k}. ${p[2].replace(/[<&>]/g,"")}</name></rtept>`).join("")}</rte></gpx>`;
+    const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([x],{type:"application/gpx+xml"}));a.download="bluewater-plan.gpx";document.body.appendChild(a);a.click();a.remove();};
+  try{localStorage.setItem("bwb-lastplan",text);}catch(e){}if(MAP.ready)redraw();}
+function drawPlan(g,X,Y){const P=MAP.plan;if(!P)return;g.setLineDash([9,5]);g.strokeStyle="#ffb547";g.lineWidth=3;g.beginPath();P.pts.forEach((p,k)=>k?g.lineTo(X(p[1]),Y(p[0])):g.moveTo(X(p[1]),Y(p[0])));g.stroke();g.setLineDash([]);
+  g.font="bold 11px sans-serif";P.pts.forEach((p,k)=>{if(!k)return;const x=X(p[1]),y=Y(p[0]);g.fillStyle="#ffb547";g.strokeStyle="#3a2400";g.lineWidth=2;g.beginPath();g.arc(x,y,9,0,7);g.fill();g.stroke();g.fillStyle="#3a2400";g.textAlign="center";g.fillText(k,x,y+4);g.textAlign="left";});}
+function renderPlanBox(){const h=+new Date().toLocaleString("en-NZ",{timeZone:NZTZ,hour:"numeric",hour12:false});const greet=h<12?"Morning":h<17?"Afternoon":"Evening";
+  $("planbox").innerHTML=`<div class="planhead"><b>${greet}, skipper <span id="skname" title="Change name">${SKIPPER}</span>.</b> Where are you heading today?</div>
+    <div class="planrow"><input id="plantext" placeholder="e.g. I'm heading towards Mayor, or the Rangas from Whakatāne" value="${(localStorage.getItem("bwb-lastplan")||"").replace(/"/g,"&quot;")}"><button class="btn pri" id="plango">Plan my day</button></div>
+    <div class="chips" id="planchips">${["Mayor Island","Motiti","The Rangas","White Island","Alderman Islands","Mercury Islands"].map(c=>`<span class="chip pc">${c}</span>`).join("")}
+      <span class="srcm" style="margin-left:auto">Leaving from <select id="homeport">${PORTS.map(p=>`<option ${p[0]===HOMEPORT?"selected":""}>${p[0]}</option>`).join("")}</select></span></div>
+    <div id="planout"></div>`;
+  $("plango").onclick=()=>makePlan($("plantext").value);$("plantext").onkeydown=e=>{if(e.key==="Enter")makePlan($("plantext").value);};
+  document.querySelectorAll(".pc").forEach(c=>c.onclick=()=>{$("plantext").value=`Heading to ${c.textContent}`;makePlan($("plantext").value);});
+  $("homeport").onchange=e=>{HOMEPORT=e.target.value;try{localStorage.setItem("bwb-home",HOMEPORT);}catch(x){}};
+  $("skname").onclick=()=>{const n=prompt("Skipper's name?",SKIPPER);if(n){SKIPPER=n.trim();try{localStorage.setItem("bwb-skipper",SKIPPER);}catch(x){}renderPlanBox();}};}
+renderPlanBox();
 
 /* ---------- Learning from the catch log ----------
    Ocean conditions only (no depth). For every catch the app saves the conditions at the hook-up spot AND where that
