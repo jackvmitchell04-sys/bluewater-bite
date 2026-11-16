@@ -567,11 +567,13 @@ function flowFromUV(u,v,eta){const U=gradient(u,1/1000),V=gradient(v,1/1000),W=n
   return{u,v,W,zeta,div,sd:Math.sqrt(s/(c||1)),slope:gradient(eta,1/1000).g};}
 /* keep only eddies big enough to matter (about 30 km across or more, sea level at least 1.5 cm off), and find their centres */
 function eddyComponents(A){const seen=new Uint8Array(NN);A.eddyList=[];
-  for(let n0=0;n0<NN;n0++){if(!A.eddy[n0]||seen[n0])continue;const sg=A.eddy[n0],q=[n0];seen[n0]=1;let si=0,sj=0,sh=0;
-    for(let h=0;h<q.length;h++){const n=q[h],i=n%NX,j=(n-i)/NX;si+=i;sj+=j;sh+=A.slaL[n];for(const[a,b]of[[1,0],[-1,0],[0,1],[0,-1]]){const x=i+a,y=j+b;if(x<0||y<0||x>=NX||y>=NY)continue;const m=ix(x,y);if(!seen[m]&&A.eddy[m]===sg){seen[m]=1;q.push(m);}}}
-    if(q.length<200||Math.abs(sh/q.length)<.015){for(const n of q)A.eddy[n]=0;continue;}
-    let sat=null;if(A.sla&&A.mu){const S=A.sla[A.sla.length-1];let t=0,c=0;for(const n of q)if(!isNaN(S[n])){t+=S[n];c++;}if(c)sat=t/c;}
-    A.eddyList.push({sign:sg,lat:latOf(sj/q.length),lon:lonOf(si/q.length),km:Math.sqrt(q.length)*AREA.res*KM*.8,h:sh/q.length,sat,conf:sat!=null&&Math.sign(sat)===sg&&Math.abs(sat)>.03});}
+  for(let n0=0;n0<NN;n0++){if(!A.eddy[n0]||seen[n0])continue;const sg=A.eddy[n0],q=[n0];seen[n0]=1;let si=0,sj=0,sh=0,zs=0;
+    for(let h=0;h<q.length;h++){const n=q[h],i=n%NX,j=(n-i)/NX;si+=i;sj+=j;sh+=isNaN(A.slaA[n])?0:A.slaA[n];zs+=A.geo.zeta[n];for(const[a,b]of[[1,0],[-1,0],[0,1],[0,-1]]){const x=i+a,y=j+b;if(x<0||y<0||x>=NX||y>=NY)continue;const m=ix(x,y);if(!seen[m]&&A.eddy[m]===sg){seen[m]=1;q.push(m);}}}
+    // keep eddies the model actually resolves: ~25 km across or more and spinning at least 5% of the Coriolis rate
+    if(q.length<150||Math.abs(zs/q.length)<4e-6){for(const n of q)A.eddy[n]=0;continue;}
+    let sat=null;if(A.sla&&A.mu){if(!A.slaSatA){const S=A.sla[A.sla.length-1],big=smooth(smooth(smooth(S,8),8),8);A.slaSatA=S.map((v,n)=>v-big[n]);}
+      const S=A.slaSatA;let t=0,c=0;for(const n of q)if(!isNaN(S[n])){t+=S[n];c++;}if(c)sat=t/c;}
+    A.eddyList.push({sign:sg,lat:latOf(sj/q.length),lon:lonOf(si/q.length),km:Math.sqrt(q.length)*AREA.res*KM*.8,h:sh/q.length,spin:zs/q.length,sat,conf:sat!=null&&Math.sign(sat)===sg&&Math.abs(sat)>.01});}
   const mk=sg=>smooth(Float32Array.from(A.eddy,x=>x===sg?1:0),2);A.eddyW=mk(1);A.eddyC=mk(-1);}
 /* ---------- analysis ---------- */
 function analyse(D){
@@ -601,7 +603,10 @@ function analyse(D){
     A.speed=new Float32Array(NN);for(let n=0;n<NN;n++)A.speed[n]=Math.hypot(D.mu[n],D.mv[n])*1.944;}
   else if(D.sla){A.geo=geostrophy(D.sla[D.sla.length-1]);A.slaL=D.sla[D.sla.length-1];}
   if(A.geo){
-    A.eddy=new Int8Array(NN);for(let n=0;n<NN;n++){if(A.geo.W[n]<-0.2*A.geo.sd)A.eddy[n]=A.slaL[n]>0?1:-1;}
+    // rotation-dominated cores (Okubo-Weiss < 0); southern hemisphere: anticlockwise (vorticity > 0) = warm-core, clockwise = cold-core.
+    // Raw model sea level includes the regional tilt of the current, so it can't decide the type; the spin can.
+    A.eddy=new Int8Array(NN);for(let n=0;n<NN;n++){if(A.geo.W[n]<-0.2*A.geo.sd&&!isNaN(A.geo.zeta[n]))A.eddy[n]=A.geo.zeta[n]>0?1:-1;}
+    {const big=smooth(smooth(smooth(A.slaL,6),6),6);A.slaA=A.slaL.map((v,n)=>v-big[n]);}   // local sea-level bump, regional tilt removed
     eddyComponents(A);const warmCore=new Uint8Array(NN);for(let n=0;n<NN;n++)warmCore[n]=A.eddy[n]===1?1:0;A.warmDist=distKm(warmCore);}
   const dep=D.depth.map(v=>isNaN(v)?NaN:Math.log10(Math.max(v,1)));A.slope=gradient(dep).g;A.bg=gradient(D.depth);
   return A;}
@@ -717,7 +722,7 @@ function layerDefs(A){const L=A.sst.length-1,d=Math.min(MAP.day,L);
     anom:A.anom?{f:A.anom,col:v=>ramp(DIV,(v+2)/4),pal:t=>ramp(DIV,t),lg:["-2°C","+2°C"],title:"SST vs 2003-2014 normal"}:null,
     chl:A.chl?{f:A.chlLog[Math.min(d,A.chlLog.length-1)],col:v=>ramp(CHL,(v+1.3)/1.8),pal:t=>ramp(CHL,t),lg:["0.05","3 mg/m³"],title:"Chlorophyll",dated:true,note:A.chlAge?"Newest clear pixel from 4 satellites; where clouds hid the water, older pixels (up to 5 days) are moved with the current to where that water is now, and count for less in the score.":""}:null,
     clarity:A.D_kd?{f:A.D_kd,col:v=>ramp(CLR,(Math.log10(v)+1.6)/1.1),pal:t=>ramp(CLR,t),lg:["Clear blue","Green/turbid"],title:"Water clarity (Kd490)"}:null,
-    ssh:A.slaL?{f:A.slaL,col:v=>ramp(DIV,(v+.2)/.4),pal:t=>ramp(DIV,t),lg:["-20 cm","+20 cm"],title:A.convN?"Sea level, tide removed (Copernicus model)":"Sea surface height anomaly",note:"High water = warm-core eddies (anticlockwise here), low = cold-core."}:null,
+    ssh:A.slaL?{f:A.slaA||A.slaL,col:v=>ramp(DIV,(v+.06)/.12),pal:t=>ramp(DIV,t),lg:["-6 cm","+6 cm"],title:A.convN?"Sea level bumps and dips (Copernicus model, tide and regional tilt removed)":"Sea surface height anomaly",note:"High water = warm-core eddies (anticlockwise here), low = cold-core."}:null,
     conv:A.convN?{f:A.convN,col:v=>ramp(DIV,(v+1)/2),pal:t=>ramp(DIV,t),lg:["Upwelling","Converging"],title:"Surface convergence and upwelling",note:"Red: currents pushing together, which stacks bait, weed and scum lines. Blue: water spreading apart, drawing cooler nutrient-rich water up from below."}:null,
     curr:A.speed?{f:A.speed,col:v=>ramp(CUR,v/1.5),pal:t=>ramp(CUR,t),lg:["0 kn","1.5 kn+"],title:"Surface current speed (24 h mean)"}:null,
     front:{f:A.ccFreqS,col:v=>ramp(FRN,v*2.5),pal:t=>ramp(FRN,t),lg:["Rare","Every day"],title:"Front frequency, last 6 days"},
