@@ -275,6 +275,8 @@ def merged_colour(sources, var, latest, lookback=5, ndays=6):
         age = np.where(vday > 0, day.toordinal() - vday, np.nan)
     cov = float(np.isfinite(frames[-1]).mean())
     log(f"colour: merged {var} to {newest}, {cov:.0%} of the box has a clear pixel within {lookback} days")
+    if cov < 0.05:
+        log(f"colour: {var} too cloudy to use today"); return None, None, None
     label = "Merged " + ", ".join(used) + f": newest clear pixel within {lookback} days" + (f", older pixels moved with {flow_src}" if U is not None else "") + ", 1.5 km grid"
     return pack(lats, lons, [d.isoformat() for d in dates], np.array(frames), digits=3), pack(lats, lons, [dates[-1].isoformat()], age[None], digits=0)["frames"][0], label
 
