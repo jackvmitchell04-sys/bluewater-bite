@@ -1033,20 +1033,40 @@ def truecolour():
                 shots.append({"day": day, "sat": sat, "img": img, "bad": bad, "clear": clear})
     if not shots:
         raise RuntimeError("no VIIRS true colour in the last 3 days")
-    out = np.zeros((h, w, 3), np.float32); best = np.full((h, w), 99.0); src = np.full((h, w), -1, np.int16)
+    # base: the best single photo of the newest day (most cloud-free, least sun glare on the clear sea);
+    # then fill only its cloud gaps from the other photos, colour-matched to the base and feathered, so no patchwork
     newest_day = max(s["day"] for s in shots)
-    for k, s in enumerate(shots):                                         # newest day first; a day only counts where it's clear
-        age = (newest_day - s["day"]).days
-        cost = s["bad"] + 0.6 * age                                       # a clear older pixel beats a cloudy new one, not a clear new one
-        take = cost < best
-        out[take] = s["img"][take]; best[take] = cost[take]; src[take] = k
+    for s in shots:
+        good = (s["bad"] < 0.3)
+        s["good"] = good
+        s["glare"] = float(s["img"].mean(2)[good].mean()) if good.any() else 255.0
+        s["q"] = s["clear"] - max(0.0, s["glare"] - 15) / 120 - 0.5 * (newest_day - s["day"]).days
+    shots.sort(key=lambda s: -s["q"])
+    base = shots[0]
+    out = base["img"].copy(); alpha = _box(base["good"].astype(np.float32), 3); src = np.zeros((h, w), np.float32)
+    for k, s in enumerate(shots[1:], 1):
+        need = 1 - alpha
+        if need.mean() < 0.01:
+            break
+        both = base["good"] & s["good"]
+        img = s["img"].copy()
+        if both.sum() > 500:                                          # match brightness/colour to the base where both are clear
+            for ch in range(3):
+                x, y = img[..., ch][both], out[..., ch][both]
+                a = np.clip(np.cov(x, y)[0, 1] / (x.var() + 1e-6), 0.6, 1.6); b = y.mean() - a * x.mean()
+                img[..., ch] = a * img[..., ch] + b
+        wgt = need * _box(s["good"].astype(np.float32), 3)
+        out = out * (1 - wgt[..., None]) + img * wgt[..., None]
+        alpha = alpha + wgt * (1 - alpha); src = np.where(wgt > 0.5, k, src)
+        s["share"] = float((wgt > 0.5).mean())
+    base["share"] = float((src == 0).mean())
     Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(os.path.join(OUT, "truecolour.jpg"), quality=86, optimize=True)
-    used = [{"day": str(s["day"]), "sat": s["sat"], "share": round(float((src == k).mean()), 3), "clear": round(s["clear"], 3)} for k, s in enumerate(shots)]
-    used = [u for u in used if u["share"] > 0.001]
+    used = [{"day": str(s["day"]), "sat": s["sat"], "share": round(s.get("share", 0.0), 3), "clear": round(s["clear"], 3)} for s in shots]
+    used = [u for u in used if u["share"] > 0.005]
     newest = max(u["day"] for u in used)
     with open(os.path.join(OUT, "truecolour.json"), "w") as f:
         json.dump({"updated": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ"), "newest": newest, "lon0": BOX["lon0"], "lon1": BOX["lon0"] + w * res,
-                   "lat1": BOX["lat1"], "lat0": BOX["lat1"] - h * res, "clear": round(float((best < 0.25).mean()), 3), "sources": used}, f)
+                   "lat1": BOX["lat1"], "lat0": BOX["lat1"] - h * res, "clear": round(float((alpha > 0.5).mean()), 3), "sources": used}, f)
     log("truecolour: mosaic from " + ", ".join(f"{u['sat']} {u['day']} {u['share']:.0%}" for u in used))
 
 
