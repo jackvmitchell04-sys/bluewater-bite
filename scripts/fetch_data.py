@@ -216,7 +216,24 @@ def _resample(la, lo, a, LA, LO):
     return out
 
 
-def merged_colour(sources, var, latest, lookback=7, ndays=6):
+def surface_flow(LA, LO):
+    """Surface current (m/s) on the target grid for moving older satellite pixels: yesterday's Copernicus 1/12 deg
+    model (includes wind drift), else NOAA geostrophic currents. Zero where unknown."""
+    try:
+        m = json.load(open(os.path.join(OUT, "model.json")))
+        g = lambda k: np.array([[np.nan if v is None else v for v in r] for r in m["frames"][k]], float)
+        u, v = _resample(m["lats"], m["lons"], g(0), LA, LO), _resample(m["lats"], m["lons"], g(1), LA, LO)
+        src = "Copernicus model currents"
+    except Exception:
+        if "geo" not in OCEAN:
+            return None, None, None
+        (la, lo, _, gu), (_, _, _, gv) = OCEAN["geo"]
+        u, v = _resample(la, lo, gu[0], LA, LO), _resample(la, lo, gv[0], LA, LO); src = "NOAA geostrophic currents"
+    u = np.where(np.isfinite(u), np.clip(u, -1.5, 1.5), 0.0); v = np.where(np.isfinite(v), np.clip(v, -1.5, 1.5), 0.0)
+    return u, v, src
+
+
+def merged_colour(sources, var, latest, lookback=5, ndays=6):
     """Newest clear pixel from any sensor, day by day. Returns (packed frames, age-of-pixel frame, label) or (None, None, None)."""
     lats = list(np.round(np.arange(BOX["lat1"], BOX["lat0"] - 1e-9, -MERGE_RES), 4)); lons = list(np.round(np.arange(BOX["lon0"], BOX["lon1"] + 1e-9, MERGE_RES), 4))
     LO, LA = np.meshgrid(lons, lats)
@@ -238,21 +255,27 @@ def merged_colour(sources, var, latest, lookback=7, ndays=6):
         time.sleep(1)
     if not obs:
         return None, None, None
-    newest = max(o[0] for o in obs)
+    newest = max(max(o[0] for o in obs), dt.date.fromisoformat(latest))   # project to the SST day so every layer lines up
     dates = [newest - dt.timedelta(days=ndays - 1 - k) for k in range(ndays)]
+    # older pixels are moved with the surface current to where that water should be on the target day
+    U, V, flow_src = surface_flow(LA, LO)
     frames, age = [], None
     for day in dates:
         val = np.full(LA.shape, np.nan); vday = np.full(LA.shape, -1e9)
         for d, rank, g in sorted(obs, key=lambda o: (o[0], -o[1])):     # older first, finer sensor last on the same day
-            if d > day or (day - d).days > lookback:
+            a = (day - d).days
+            if d > day or a > lookback:
                 continue
+            if a > 0 and U is not None:
+                secs = a * 86400.0
+                g = _resample(lats, lons, g, LA - V * secs / 111320.0, LO - U * secs / (111320.0 * np.cos(np.radians(LA))))
             ok = np.isfinite(g) & (g > 0)
             val[ok] = g[ok]; vday[ok] = d.toordinal()
         frames.append(val)
         age = np.where(vday > 0, day.toordinal() - vday, np.nan)
     cov = float(np.isfinite(frames[-1]).mean())
     log(f"colour: merged {var} to {newest}, {cov:.0%} of the box has a clear pixel within {lookback} days")
-    label = "Merged " + ", ".join(used) + f": newest clear pixel within {lookback} days, 1.5 km grid"
+    label = "Merged " + ", ".join(used) + f": newest clear pixel within {lookback} days" + (f", older pixels moved with {flow_src}" if U is not None else "") + ", 1.5 km grid"
     return pack(lats, lons, [d.isoformat() for d in dates], np.array(frames), digits=3), pack(lats, lons, [dates[-1].isoformat()], age[None], digits=0)["frames"][0], label
 
 
@@ -310,6 +333,11 @@ def ocean():
             out["clim"] = pack(*erddap_frames("jplMURSST41clim", "mean_sst", f"[({dt.datetime.strptime(latest, '%Y-%m-%d').timetuple().tm_yday})]", stride=2, pad=0.02), digits=2); log("ocean: clim ok")
         except Exception as e:
             log("ocean: clim failed:", str(e)[:120])
+    try:
+        g = erddap_frames("noaacwBLENDEDNRTcurrentsDaily", "u_current", "[last]", pad=0.5), erddap_frames("noaacwBLENDEDNRTcurrentsDaily", "v_current", "[last]", pad=0.5)
+        OCEAN["geo"] = g; log("ocean: geostrophic currents", g[0][2][-1])
+    except Exception as e:
+        log("ocean: geostrophic currents failed:", str(e)[:100])
     chl, age, label = merged_colour(CHL_SOURCES, "chlor_a", latest)
     if chl:
         out["chl"], out["chl_age"], out["chl_label"] = chl, age, label
@@ -330,11 +358,6 @@ def ocean():
     except Exception as e:
         log("ocean: sla failed:", str(e)[:120])
     try:
-        g = erddap_frames("noaacwBLENDEDNRTcurrentsDaily", "u_current", "[last]", pad=0.5), erddap_frames("noaacwBLENDEDNRTcurrentsDaily", "v_current", "[last]", pad=0.5)
-        OCEAN["geo"] = g; log("ocean: geostrophic currents", g[0][2][-1])
-    except Exception as e:
-        log("ocean: geostrophic currents failed:", str(e)[:100])
-    try:
         la_, lo_, tt_, a_ = erddap_frames("noaacwLEOACSPOSSTL3SnrtCDaily", "sea_surface_temperature", "[last-2:1:last]", pad=0.02)
         if np.nanmean(a_) > 200:
             a_ = a_ - 273.15
@@ -348,7 +371,7 @@ def ocean():
     kd, kage, label = merged_colour(KD_SOURCES, "kd_490", latest)
     if kd:
         k = kd; kd = {"lats": k["lats"], "lons": k["lons"], "times": k["times"][-1:], "frames": k["frames"][-1:]}
-        out["kd"], out["kd_label"] = kd, label
+        out["kd"], out["kd_label"], out["kd_age"] = kd, label, kage
     for var in (() if kd else ("kd_490",)):
         kd, label = best_recent([("noaacwNPPN20S3AkdSCIDINEOF2kmDaily", "VIIRS + Sentinel-3 OLCI Kd490, 2 km"),
                                  ("nesdisNPPN20S3AkdSCIDINEOFDaily", "VIIRS + Sentinel-3 OLCI Kd490, 9 km")], var, latest, time="[last]", digits=4, max_age=7)

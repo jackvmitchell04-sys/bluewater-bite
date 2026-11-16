@@ -595,10 +595,10 @@ function scoreField(A,spKey){
     const o=t<sp.min?sp.min-t:t>sp.max?t-sp.max:0,temp=Math.max(0,1-o/2.5);
     const parts=[[.22,Math.exp(-A.frontDist[n]/4)],[.10,Math.min(1,A.ccFreqS[n]*2.5)],[.10,Math.min(1,(A.fr[L].g[n]||0)/0.15)],
       [.15,z<dp[0]?Math.max(.1,z/dp[0]):z>dp[1]?Math.max(.4,1-(z-dp[1])/dp[1]):1],[.10,Math.min(1,(A.slope[n]||0)/0.08)]];
-    if(A.chlDist)parts.push([.10,Math.exp(-A.chlDist[n]/5)]);
+    if(A.chlDist)parts.push([.10*(A.chlAge&&!isNaN(A.chlAge[n])?Math.max(0,1-A.chlAge[n]/6):1),Math.exp(-A.chlDist[n]/5)]);
     if(A.geo&&!isNaN(A.geo.slope[n])){const edge=Math.min(1,A.geo.slope[n]/4e-6)*(WARM_SP[spKey]?(A.slaL[n]>-0.02?1:.5):1);parts.push([.15,Math.max(edge,WARM_SP[spKey]?Math.exp(-A.warmDist[n]/15)*.8:0)]);}
     if(A.convN&&!isNaN(A.convN[n]))parts.push([.08,Math.max(0,Math.min(1,A.convN[n]))]);
-    if(A.D_kd&&!isNaN(A.D_kd[n]))parts.push([.05,WARM_SP[spKey]?Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):.6]);
+    if(A.D_kd&&!isNaN(A.D_kd[n]))parts.push([.05*(A.kdAge&&!isNaN(A.kdAge[n])?Math.max(0,1-A.kdAge[n]/6):1),WARM_SP[spKey]?Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):.6]);
     let ws=0,v=0;for(const[w,x]of parts){ws+=w;v+=w*x;}v/=ws;
     let mod=.2+.8*temp;if(A.anom&&WARM_SP[spKey]&&!isNaN(A.anom[n]))mod*=1+0.08*Math.max(-1,Math.min(1.5,A.anom[n]));
     s[n]=Math.min(1,v*mod);}
@@ -685,7 +685,7 @@ function layerDefs(A){const L=A.sst.length-1,d=Math.min(MAP.day,L);
     score:{f:MAP.score,col:v=>ramp(SCR,v/(MAP.scoreMax||1)),pal:t=>ramp(SCR,t),lg:["Low","High"],title:"Hotspot score"},
     sst:{f:A.sst[d],col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:"Sea surface temp (MUR 1 km)",dated:true},
     anom:A.anom?{f:A.anom,col:v=>ramp(DIV,(v+2)/4),pal:t=>ramp(DIV,t),lg:["-2°C","+2°C"],title:"SST vs 2003-2014 normal"}:null,
-    chl:A.chl?{f:A.chlLog[Math.min(d,A.chlLog.length-1)],col:v=>ramp(CHL,(v+1.3)/1.8),pal:t=>ramp(CHL,t),lg:["0.05","3 mg/m³"],title:"Chlorophyll",dated:true}:null,
+    chl:A.chl?{f:A.chlLog[Math.min(d,A.chlLog.length-1)],col:v=>ramp(CHL,(v+1.3)/1.8),pal:t=>ramp(CHL,t),lg:["0.05","3 mg/m³"],title:"Chlorophyll",dated:true,note:A.chlAge?"Newest clear pixel from 4 satellites; where clouds hid the water, older pixels (up to 5 days) are moved with the current to where that water is now, and count for less in the score.":""}:null,
     clarity:A.D_kd?{f:A.D_kd,col:v=>ramp(CLR,(Math.log10(v)+1.6)/1.1),pal:t=>ramp(CLR,t),lg:["Clear blue","Green/turbid"],title:"Water clarity (Kd490)"}:null,
     ssh:A.slaL?{f:A.slaL,col:v=>ramp(DIV,(v+.2)/.4),pal:t=>ramp(DIV,t),lg:["-20 cm","+20 cm"],title:A.convN?"Sea level, tide removed (Copernicus model)":"Sea surface height anomaly",note:"High water = warm-core eddies (anticlockwise here), low = cold-core."}:null,
     conv:A.convN?{f:A.convN,col:v=>ramp(DIV,(v+1)/2),pal:t=>ramp(DIV,t),lg:["Upwelling","Converging"],title:"Surface convergence and upwelling",note:"Red: currents pushing together, which stacks bait, weed and scum lines. Blue: water spreading apart, drawing cooler nutrient-rich water up from below."}:null,
@@ -938,7 +938,7 @@ function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
     if(c.hima!=null)rows.push(`Hourly SST ${c.hima.toFixed(1)}°C`);
     if(c.anom!=null)rows.push(`${c.anom>=0?"+":""}${c.anom.toFixed(1)}°C vs normal`);
     if(c.dep!=null)rows.push(`Depth ${Math.round(c.dep)} m`);
-    if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³${c.chlAge!=null?` <span class="tipm">(seen ${c.chlAge<.5?"on the latest pass":Math.round(c.chlAge)+" d before"})</span>`:""}`);
+    if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³${c.chlAge!=null?` <span class="tipm">(${c.chlAge<.5?"seen today":`seen ${Math.round(c.chlAge)} d ago, moved with the current`})</span>`:""}`);
     if(c.front!=null)rows.push(`Nearest front ${c.front<1?"here":c.front.toFixed(1)+" km"}`);}
   rows.push(`<a href="#" class="tipgo" style="color:#7fd0ff">Navigate here</a>`);
   $("maptip").innerHTML=rows.filter(Boolean).join("<br>")+'<span class="tipx">×</span>';$("maptip").querySelector(".tipx").onclick=ev=>{ev.stopPropagation();MAP.probe=null;redraw();};
@@ -1085,8 +1085,9 @@ async function loadMap(){
     if(OJ&&OJ.acspo){const o=OJ.acspo;acspo=jsonGrid({lats:o.lats,lons:o.lons,values:o.frames[0]});for(let n=0;n<NN;n++)if(land[n])acspo[n]=NaN;
       let c=0;for(let n=0;n<NN;n++)if(!isNaN(acspo[n]))c++;src.push({ok:1,name:"Observed SST, front check",detail:`${OJ.acspo_label}, ${Math.round(c/NN*100)}% clear`});}
     if(chl&&OJ.chl_age){chlAgeG=jsonGrid({lats:OJ.chl.lats,lons:OJ.chl.lons,values:OJ.chl_age});}
+    const kdAgeG=kd&&OJ.kd_age?jsonGrid({lats:OJ.kd.lats,lons:OJ.kd.lons,values:OJ.kd_age}):null;
     if(sla&&OJ.sla_label)src.push({ok:1,name:"Satellite altimetry (eddy check)",detail:`${OJ.sla_label}, to ${OJ.sla.times[OJ.sla.times.length-1]}`});
-    D={sst:S.fields,times,chl,chlAge:chlAgeG,depth,land,curr:cur,mu,mv,eta,wind,fcDelta,fcDates,sla,clim,kd,hima,acspo,himaCov:hj?hj.coverage:0,sample:false};
+    D={sst:S.fields,times,chl,chlAge:chlAgeG,kdAge:kdAgeG,depth,land,curr:cur,mu,mv,eta,wind,fcDelta,fcDates,sla,clim,kd,hima,acspo,himaCov:hj?hj.coverage:0,sample:false};
   }catch(e){D=sampleData();MAP.src=[{sample:1,name:"Sample data",detail:"Live feeds unreachable from this preview. Open the file directly in a browser."}];}
   const BF=D.sample?null:MAP.BF;
   MAP.contours=buildContours(BF||{nx:NX,ny:NY,lat1:AREA.lat1,lon0:AREA.lon0,res:AREA.res,depth:D.depth});
