@@ -469,11 +469,7 @@ def ocean():
         o = out["sst"]; arr = np.array([[[np.nan if v is None else v for v in r] for r in f] for f in o["frames"]], float)
         OCEAN["sst"] = (o["lats"], o["lons"], o["times"], arr); log("ocean: SST kept from previous run", o["times"][-1])
     latest = OCEAN["sst"][2][-1] if "sst" in OCEAN else dt.date.today().isoformat()
-    if sst is not None:
-        try:
-            out["clim"] = pack(*erddap_frames("jplMURSST41clim", "mean_sst", f"[({dt.datetime.strptime(latest, '%Y-%m-%d').timetuple().tm_yday})]", stride=2, pad=0.02), digits=2); log("ocean: clim ok")
-        except Exception as e:
-            log("ocean: clim failed:", str(e)[:120])
+    out.pop("clim", None)   # SST vs long-term average isn't used
     try:
         g = erddap_frames("noaacwBLENDEDNRTcurrentsDaily", "u_current", "[last]", pad=0.5), erddap_frames("noaacwBLENDEDNRTcurrentsDaily", "v_current", "[last]", pad=0.5)
         OCEAN["geo"] = g; log("ocean: geostrophic currents", g[0][2][-1])

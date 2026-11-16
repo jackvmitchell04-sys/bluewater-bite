@@ -161,7 +161,7 @@ ol.plan b.stop{color:var(--accent)}ol.plan{margin:10px 0 6px;padding-left:22px;l
     <div class="banner" id="mapbanner">Live satellite feeds couldn't be reached from this preview, so the map shows a made-up sample ocean. Open the file directly in your browser to get real data.</div>
     <div class="status" id="mapstatus"></div>
     <div class="lyrs">
-      <button class="lyr on" data-l="score">Hotspots</button><button class="lyr" data-l="chart">Chart</button><button class="lyr" data-l="fc">SST forecast</button><button class="lyr" data-l="sharp">Sharp SST</button><button class="lyr" data-l="sst">SST daily</button><button class="lyr" data-l="front">Fronts</button><button class="lyr" data-l="anom">SST anomaly</button><button class="lyr" data-l="ssh">Sea level / eddies</button><button class="lyr" data-l="chl">Chlorophyll</button><button class="lyr" data-l="clarity">Water clarity</button><button class="lyr" data-l="tc">True colour</button><button class="lyr" data-l="hima">Hourly SST</button><button class="lyr" data-l="conv">Upwelling / convergence</button><button class="lyr" data-l="curr">Current speed</button><button class="lyr" data-l="change">5-day change</button>
+      <button class="lyr on" data-l="score">Hotspots</button><button class="lyr" data-l="chart">Chart</button><button class="lyr" data-l="fc">SST forecast</button><button class="lyr" data-l="sharp">Sharp SST</button><button class="lyr" data-l="sst">SST daily</button><button class="lyr" data-l="front">Fronts</button><button class="lyr" data-l="ssh">Sea level / eddies</button><button class="lyr" data-l="chl">Chlorophyll</button><button class="lyr" data-l="clarity">Water clarity</button><button class="lyr" data-l="tc">True colour</button><button class="lyr" data-l="hima">Hourly SST</button><button class="lyr" data-l="conv">Upwelling / convergence</button><button class="lyr" data-l="curr">Current speed</button><button class="lyr" data-l="change">5-day change</button>
     </div>
     <div class="days" id="fcdays" hidden></div>
     <div class="days" id="tcbar" hidden></div>
@@ -600,7 +600,6 @@ function analyse(D){
   A.frontDist=distKm(A.cc[L]);
   A.persist=new Float32Array(NN);for(let n=0;n<NN;n++){let c=0;for(const f of A.fr)if(f.g[n]>0.06)c++;A.persist[n]=c/A.fr.length;}
   A.change=new Float32Array(NN);for(let n=0;n<NN;n++)A.change[n]=D.sst[L][n]-D.sst[0][n];
-  if(D.clim){A.anom=new Float32Array(NN);for(let n=0;n<NN;n++)A.anom[n]=D.sst[L][n]-D.clim[n];}
   if(D.chl){A.chlLog=D.chl.map(c=>c.map(v=>v>0?Math.log10(v):NaN));const cl=A.chlLog[A.chlLog.length-1];A.chlG=gradient(cl).g;A.chlEdge=cayulaCornillon(smooth(cl),{minDT:0.08});A.chlDist=distKm(A.chlEdge);}
   if(D.mu){A.geo=flowFromUV(D.mu,D.mv,D.eta);A.slaL=D.eta;
     const cv=smooth(A.geo.div.map(x=>-x),2),ab=[...cv].filter(x=>!isNaN(x)).map(Math.abs).sort((a,b)=>a-b),p95=ab[Math.floor(ab.length*.95)]||1;A.convN=cv.map(x=>x/p95);A.convAbs=cv.map(x=>x/3e-6);   // absolute: 3e-6 /s convergence is a strong surface convergence for a 1/12 deg model
@@ -727,7 +726,6 @@ function layerDefs(A){const L=A.sst.length-1,d=Math.min(MAP.day,L);
   return{
     score:{f:MAP.score,col:v=>ramp(SCR,v/(MAP.scoreMax||1)),pal:t=>ramp(SCR,t),lg:["Low","High"],title:"Hotspot score"},
     sst:{f:A.sst[d],col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:"Sea surface temp (MUR 1 km)",dated:true},
-    anom:A.anom?{f:A.anom,col:v=>ramp(DIV,(v+2)/4),pal:t=>ramp(DIV,t),lg:["-2°C","+2°C"],title:"SST vs 2003-2014 normal"}:null,
     chl:A.chl?{f:A.chlLog[Math.min(d,A.chlLog.length-1)],col:v=>ramp(CHL,(v+1.3)/1.8),pal:t=>ramp(CHL,t),lg:["0.05","3 mg/m³"],title:"Chlorophyll",dated:true,note:A.chlAge?"Newest clear pixel from 4 satellites; where clouds hid the water, older pixels (up to 5 days) are moved with the current to where that water is now, and count for less in the score.":""}:null,
     clarity:A.D_kd?{f:A.D_kd,col:v=>ramp(CLR,(Math.log10(v)+1.6)/1.1),pal:t=>ramp(CLR,t),lg:["Clear blue","Green/turbid"],title:"Water clarity (Kd490)",note:"From NOAA-21/NOAA-20 at 750 m; where cloud hid the water, estimated from chlorophyll (in open ocean, clarity is set by plankton). Older pixels count for less."}:null,
     ssh:A.slaL?{f:A.slaA||A.slaL,col:v=>ramp(DIV,(v+.06)/.12),pal:t=>ramp(DIV,t),lg:["-6 cm","+6 cm"],title:A.convN?"Sea level bumps and dips (Copernicus model, tide and regional tilt removed)":"Sea surface height anomaly",note:"High water = warm-core eddies (anticlockwise here), low = cold-core."}:null,
@@ -993,7 +991,7 @@ function conditionsAt(la,lo,day){const A=MAP.A;if(!A)return{};const i=Math.round
   if(i<0||j<0||i>=NX||j>=NY)return{out:1};const n=ix(i,j),L=Math.min(day??A.sst.length-1,A.sst.length-1);
   let land=A.land[n],dep=A.depth[n];if(MAP.BF&&!A.sample){const B=MAP.BF,fi=Math.round((lo-B.lon0)/B.res),fj=Math.round((B.lat1-la)/B.res);if(fi>=0&&fj>=0&&fi<B.nx&&fj<B.ny){dep=B.depth[fj*B.nx+fi];land=isNaN(dep);}}
   const f=x=>x==null||isNaN(x)?null:x;const dd=detailDepth(la,lo);if(dd!==undefined){dep=dd;land=isNaN(dd);}
-  return{land,dep:f(dep),sst:f(A.sst[L][n]),date:A.times[L],hima:A.hima?f(A.hima[n]):null,anom:A.anom?f(A.anom[n]):null,
+  return{land,dep:f(dep),sst:f(A.sst[L][n]),date:A.times[L],hima:A.hima?f(A.hima[n]):null,
     chl:A.chl?f(A.chl[Math.min(L,A.chl.length-1)][n]):null,front:f(A.frontDist[n]),fc:MAP.layer==="fc"&&A.fcDelta?f(fcField(A,MAP.fcDay)[n]):null,res:reserveAt(la,lo),chlAge:A.chlAge?f(A.chlAge[n]):null};}
 
 /* probe readout for a tapped point */
@@ -1005,7 +1003,6 @@ function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
   else{rows.push(`<span class="tipT">${c.sst==null?"n/a":c.sst.toFixed(1)+"°C"}</span> <span class="tipm">${c.date||""}</span>`);
     if(c.fc!=null)rows.push(`Forecast ${MAP.A.fcDates[MAP.fcDay]}: ${c.fc.toFixed(1)}°C`);
     if(c.hima!=null)rows.push(`Hourly SST ${c.hima.toFixed(1)}°C${c.sst!=null&&c.hima-c.sst>.8?' <span class="tipm">(skin warmed by afternoon sun on a calm day; the water below is closer to the daily figure)</span>':""}`);
-    if(c.anom!=null)rows.push(`${c.anom>=0?"+":""}${c.anom.toFixed(1)}°C vs usual for this date <span class="tipm">(2003-2014 average)</span>`);
     if(c.dep!=null)rows.push(`Depth ${Math.round(c.dep)} m`);
     if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³${c.chlAge!=null?` <span class="tipm">(${c.chlAge<.5?"seen today":`seen ${Math.round(c.chlAge)} d ago, moved with the current`})</span>`:""}`);
     if(c.front!=null)rows.push(`Nearest front ${c.front<1?"here":c.front.toFixed(1)+" km"}`);}
@@ -1142,7 +1139,7 @@ async function loadMap(){
     if(mj&&mj.frames){const G=k=>{const f=jsonGrid({lats:mj.lats,lons:mj.lons,values:mj.frames[k]});for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;return fillGaps(f,land,4);};mu=G(0);mv=G(1);eta=G(2);
       src.push({ok:1,name:"Detailed currents, eddies, upwelling",detail:`Copernicus Mercator 1/12° (about 8 km), 24 h mean so the tide is removed, ${mj.updated.slice(0,16).replace("T"," ")} UTC`});}
     else src.push(sla?{ok:1,name:"Sea surface height + eddies",detail:"NOAA multi-satellite altimetry, 25 km daily"}:{ok:0,name:"Eddies",detail:slaLast?`NOAA altimetry stale (last ${slaLast}); model grid comes from the morning job`:"Unavailable"});
-    const clim=clp;src.push(clim?{ok:1,name:"SST anomaly",detail:"vs MUR 2003-2014 climatology for this date"}:{ok:0,name:"SST anomaly",detail:"Climatology unavailable"});
+    const clim=null;
     let cur=null,wind=null;
     if(cj&&cj.points&&cj.points.length){cur=cj.points.filter(c=>!onLandRaw(c.lat,c.lon,land)).map(c=>({lat:c.lat,lon:c.lon,v:Math.hypot(c.u,c.v)*1.944,dir:(Math.atan2(c.u,c.v)/RAD+360)%360}));
       wind={pts:cj.points,days:cj.wind_days};
@@ -1424,7 +1421,7 @@ $("csave").onclick=()=>{if(!pendingCatch)return;const pos=parsePos($("cpos").val
   let tide=null;if(TIDES){const port=TIDES.ports.map(q=>({q,d:hav(q.lat,q.lon,p.la,p.lo)})).sort((a,b)=>a.d-b.d)[0].q,st=tideState(port,t);if(st)tide={port:port.name,rising:st.rising,txt:st.txt};}
   const sp=$("csp").value,lf=MAP.ready?catchFeats(p.la,p.lo):{};
   const rec={t:p.t,la:p.la,lo:p.lo,how:p.how,sp,spn:sp.startsWith("x:")?sp.slice(2):SPECIES[sp].name,mur:c.sst??null,kg:parseFloat($("ckg").value)||null,rel:$("crel").checked,note:$("cnote").value.trim(),
-    f:lf.f||null,r:lf.r||null,sst:c.hima??c.sst??null,anom:c.anom??null,dep:c.dep??null,front:c.front??null,chl:c.chl??null,moon:phaseName(ph),age:+age.toFixed(1),sol:solunarAt(t),tide,baro:(()=>{const b=baroAt(t);return b?{p:Math.round(b.p),d3:+b.d3.toFixed(1),trend:b.trend}:null;})()};for(let k=0;k<count;k++)CATCHES.unshift({...rec});
+    f:lf.f||null,r:lf.r||null,sst:c.hima??c.sst??null,dep:c.dep??null,front:c.front??null,chl:c.chl??null,moon:phaseName(ph),age:+age.toFixed(1),sol:solunarAt(t),tide,baro:(()=>{const b=baroAt(t);return b?{p:Math.round(b.p),d3:+b.d3.toFixed(1),trend:b.trend}:null;})()};for(let k=0;k<count;k++)CATCHES.unshift({...rec});
   saveCatches();$("cform").style.display="none";pendingCatch=null;$("chint").textContent=`Saved ${count>1?count+" catches":"catch"}. Tight lines.`+(Date.now()-t>2*864e5?" (Conditions are from the latest satellite data, so older catches are approximate.)":"");renderCatches();learnPanel();mapUpdate();};
 const med=a=>{const b=a.filter(x=>x!=null).sort((x,y)=>x-y);return b.length?b[Math.floor(b.length/2)]:null;};
 function renderCatches(){const C=CATCHES;
@@ -1441,12 +1438,12 @@ function renderCatches(){const C=CATCHES;
     <div><small>Barometer</small>${(()=>{const b=C.filter(c=>c.baro);if(!b.length)return"n/a";const f=b.filter(c=>c.baro.d3<=-1).length,st=b.filter(c=>Math.abs(c.baro.d3)<1).length;return`${pct(f,b.length)} falling, ${pct(st,b.length)} steady · median ${med(b.map(c=>c.baro.p))} hPa`;})()}</div>
     <div><small>Median depth</small>${med(C.map(c=>c.dep))!=null?Math.round(med(C.map(c=>c.dep)))+" m":"n/a"}</div></div>`;
   $("clist").innerHTML=C.map((c,i)=>`<div class="ct"><div class="h"><b>🐟 ${c.spn}${c.kg?` ${c.kg} kg`:""}</b><span class="srcm">${new Date(c.t).toLocaleString("en-NZ",{timeZone:NZTZ,weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"})}${c.rel?" · released":""}</span><button class="del" data-i="${i}" title="Delete">×</button></div>
-    <div class="wpc">${fmtLL(c.la,c.lo)}</div><div class="chips">${c.sst!=null?`<span class="chip">${c.sst.toFixed(1)}°C</span>`:""}${c.anom!=null?`<span class="chip">${c.anom>=0?"+":""}${c.anom.toFixed(1)}°C vs normal</span>`:""}${c.front!=null?`<span class="chip">Front ${c.front<1?"here":c.front.toFixed(1)+" km"}</span>`:""}${c.dep!=null?`<span class="chip">${Math.round(c.dep)} m</span>`:""}<span class="chip">${c.moon}</span><span class="chip">${c.sol==="Outside"?"No solunar period":c.sol+" period"}</span>${c.tide?`<span class="chip">${c.tide.txt} (${c.tide.port})</span>`:""}${c.baro?`<span class="chip">${c.baro.p} hPa ${c.baro.trend}</span>`:""}</div>${c.note?`<div class="wpr">${c.note.replace(/[<>&]/g,"")}</div>`:""}</div>`).join("");
+    <div class="wpc">${fmtLL(c.la,c.lo)}</div><div class="chips">${c.sst!=null?`<span class="chip">${c.sst.toFixed(1)}°C</span>`:""}${c.front!=null?`<span class="chip">Front ${c.front<1?"here":c.front.toFixed(1)+" km"}</span>`:""}${c.dep!=null?`<span class="chip">${Math.round(c.dep)} m</span>`:""}<span class="chip">${c.moon}</span><span class="chip">${c.sol==="Outside"?"No solunar period":c.sol+" period"}</span>${c.tide?`<span class="chip">${c.tide.txt} (${c.tide.port})</span>`:""}${c.baro?`<span class="chip">${c.baro.p} hPa ${c.baro.trend}</span>`:""}</div>${c.note?`<div class="wpr">${c.note.replace(/[<>&]/g,"")}</div>`:""}</div>`).join("");
   $("clist").querySelectorAll(".del").forEach(b=>b.onclick=()=>{if(!confirm("Delete this catch?"))return;CATCHES.splice(+b.dataset.i,1);saveCatches();renderCatches();learnPanel();mapUpdate();});}
 function drawCatches(g,X,Y,inView){g.font="13px sans-serif";for(const c of CATCHES){const x=X(c.lo),y=Y(c.la);if(!inView(x,y))continue;
   g.fillStyle="#ff5f45";g.strokeStyle="#fff";g.lineWidth=1.8;g.beginPath();g.arc(x,y,6.5,0,7);g.fill();g.stroke();if(VIEW.z>=2.5){g.fillText("🐟",x+7,y+5);}}}
-$("catchcsv").onclick=()=>{const h=["time_utc","lat","lon","species","kg","released","sst_c","anomaly_c","depth_m","front_km","chl","moon","moon_age","solunar","tide","pressure_hpa","pressure_3h","notes"];
-  const rows=CATCHES.map(c=>[c.t,c.la.toFixed(5),c.lo.toFixed(5),c.spn,c.kg??"",c.rel?"yes":"no",c.sst?.toFixed(2)??"",c.anom?.toFixed(2)??"",c.dep!=null?Math.round(c.dep):"",c.front?.toFixed(2)??"",c.chl?.toFixed(3)??"",c.moon,c.age,c.sol,c.tide?`${c.tide.txt} ${c.tide.port}`:"",c.baro?c.baro.p:"",c.baro?c.baro.d3:"",`"${(c.note||"").replace(/"/g,"'")}"`].join(","));
+$("catchcsv").onclick=()=>{const h=["time_utc","lat","lon","species","kg","released","sst_c","depth_m","front_km","chl","moon","moon_age","solunar","tide","pressure_hpa","pressure_3h","notes"];
+  const rows=CATCHES.map(c=>[c.t,c.la.toFixed(5),c.lo.toFixed(5),c.spn,c.kg??"",c.rel?"yes":"no",c.sst?.toFixed(2)??"",c.dep!=null?Math.round(c.dep):"",c.front?.toFixed(2)??"",c.chl?.toFixed(3)??"",c.moon,c.age,c.sol,c.tide?`${c.tide.txt} ${c.tide.port}`:"",c.baro?c.baro.p:"",c.baro?c.baro.d3:"",`"${(c.note||"").replace(/"/g,"'")}"`].join(","));
   const b=new Blob([[h.join(","),...rows].join("\n")],{type:"text/csv"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="bluewater-bite-catches.csv";document.body.appendChild(a);a.click();a.remove();};
 renderCatches();
 
@@ -1672,7 +1669,6 @@ renderPlanBox();
    weights those inputs most when it scores hotspots. */
 const FEATS=[
  {k:"sst",   nm:"water temperature",            hi:"warmer water",                lo:"cooler water",                 sd:.5,  fmt:v=>v.toFixed(1)+"°C"},
- {k:"anom",  nm:"temperature vs normal",        hi:"water warmer than normal",    lo:"water cooler than normal",     sd:.4,  fmt:v=>(v>=0?"+":"")+v.toFixed(1)+"°C"},
  {k:"chg",   nm:"5-day temperature change",     hi:"water that has been warming", lo:"water that has been cooling",  sd:.3,  fmt:v=>(v>=0?"+":"")+v.toFixed(1)+"°C"},
  {k:"grad",  nm:"temperature break strength",   hi:"strong temperature breaks",   lo:"flat, even water",             sd:.03, fmt:v=>(v*2).toFixed(2)+"°C/2 km"},
  {k:"front", nm:"distance to SST front",        hi:"water away from fronts",      lo:"close to SST fronts",          sd:2,   fmt:v=>v.toFixed(1)+" km"},
@@ -1683,7 +1679,7 @@ const FEATS=[
  {k:"conv",  nm:"convergence / upwelling",      hi:"converging currents (bait lines)",lo:"upwelling water",          sd:.25, fmt:v=>v.toFixed(2)},
  {k:"eddy",  nm:"sea level (eddies)",           hi:"warm-core eddies / high sea level",lo:"cold-core eddies / low sea level",sd:.02,fmt:v=>(v*100).toFixed(0)+" cm"}];
 function featAt(A,n){const L=A.sst.length-1,q=x=>x==null||isNaN(x)?null:x,cl=A.chl?A.chl[Math.min(L,A.chl.length-1)][n]:NaN;
-  return{sst:q(A.sst[L][n]),anom:A.anom?q(A.anom[n]):null,chg:q(A.change[n]),grad:q(A.fr[L].g[n]),front:q(A.frontDist[n]),chl:cl>0?Math.log10(cl):null,
+  return{sst:q(A.sst[L][n]),chg:q(A.change[n]),grad:q(A.fr[L].g[n]),front:q(A.frontDist[n]),chl:cl>0?Math.log10(cl):null,
     chle:A.chlDist?q(A.chlDist[n]):null,kd:A.D_kd?q(A.D_kd[n]):null,cur:A.speed?q(A.speed[n]):null,conv:A.convN?q(A.convN[n]):null,eddy:A.slaL?q(A.slaL[n]):null};}
 /* where this spot ranks (0..1) against all sea within 30 km */
 function featRank(A,i0,j0,f){const R=Math.round(30/(AREA.res*KM)),cnt={},below={};
@@ -1693,7 +1689,7 @@ function featRank(A,i0,j0,f){const R=Math.round(30/(AREA.res*KM)),cnt={},below={
 function catchFeats(la,lo){const A=MAP.A;if(!A)return{};const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res);if(i<0||j<0||i>=NX||j>=NY)return{};
   const f=featAt(A,ix(i,j));return{f,r:featRank(A,i,j,f)};}
 /* older catches saved before this version: use what they have */
-const cf=c=>c.f||{sst:c.mur??c.sst,front:c.front,chl:c.chl>0?Math.log10(c.chl):null,anom:c.anom};
+const cf=c=>c.f||{sst:c.mur??c.sst,front:c.front,chl:c.chl>0?Math.log10(c.chl):null};
 let LEARN_ON=true;try{LEARN_ON=localStorage.getItem("bwb-learn")!=="0";}catch(e){}
 function learnModel(spKey){const own=CATCHES.filter(c=>c.sp===spKey),pool=own.length>=3?own:CATCHES.length>=5?CATCHES:null;if(!pool)return null;
   const st={};for(const F of FEATS){const v=pool.map(c=>cf(c)[F.k]).filter(x=>x!=null&&isFinite(x));if(v.length<3)continue;
