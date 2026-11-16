@@ -640,6 +640,7 @@ def alerts():
     except Exception:
         pass
     items = []
+    bay_rise = float(np.nanmedian(last - first))       # warming everywhere isn't news; warming more than the bay is
     for name, mla, mlo in app_marks():
         if any(_inpoly(mlo, mla, r) for r in rings):
             continue
@@ -653,8 +654,8 @@ def alerts():
         why = []
         if 18.5 <= t <= 23 and g >= 0.08:
             why.append(f"front {g * 2:.2f} C per 2 km")
-        if t >= 18.5 and rise >= 0.8:
-            why.append(f"warmed {rise:+.1f} C in 5 days")
+        if t >= 18.5 and rise >= 0.8 and rise - bay_rise >= 0.4:
+            why.append(f"warmed {rise:+.1f} C in 5 days ({rise - bay_rise:+.1f} C more than the bay)")
         if why:
             items.append({"mark": name, "lat": round(mla, 4), "lon": round(mlo, 4), "sst": round(float(t), 1), "grad": round(float(g), 3),
                           "rise": round(float(rise), 2), "why": ", ".join(why)})
