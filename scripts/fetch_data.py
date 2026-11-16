@@ -1110,15 +1110,33 @@ def sharp():
     final = np.where(np.isfinite(final), final, Mi)
     land = ~np.isfinite(Mi)
     # fronts on the sharp field, observed water only: gradient ridges (non-max suppression across the front)
-    gy, gx = np.gradient(final, SHARP_RES * 111.32, SHARP_RES * 111.32 * np.cos(np.radians(-37)))
+    fs = np.where(land, np.nan, final); fs = np.where(np.isfinite(fs), _nanbox(fs, 1), np.nan)   # 3x3 smoothing: sensor noise isn't a front
+    fs = np.where(np.isfinite(fs), fs, Mi)
+    gy, gx = np.gradient(fs, SHARP_RES * 111.32, SHARP_RES * 111.32 * np.cos(np.radians(-37)))
     gy = -gy; g = np.hypot(gx, gy)
     g[land | ~obs] = 0
-    thr = max(0.08, float(np.nanpercentile(g[obs & ~land], 92))) if (obs & ~land).sum() > 100 else 9
+    thr = max(0.12, float(np.nanpercentile(g[obs & ~land], 95))) if (obs & ~land).sum() > 100 else 9
     ang = np.arctan2(gy, gx); di = np.round(np.cos(ang)).astype(int); dj = -np.round(np.sin(ang)).astype(int)
     J, I = np.mgrid[0:ny, 0:nx]
     a = g[np.clip(J + dj, 0, ny - 1), np.clip(I + di, 0, nx - 1)]; b = g[np.clip(J - dj, 0, ny - 1), np.clip(I - di, 0, nx - 1)]
     ridge = (g >= thr) & (g >= a) & (g >= b)
-    fj_, fi_ = np.where(ridge)
+    # keep only continuous lines (8-connected, at least 7 pixels = ~5 km); isolated specks are noise or pass seams
+    lab = np.zeros(ridge.shape, np.int32); keep = np.zeros_like(ridge); n_lab = 0
+    for sj, si in zip(*np.where(ridge)):
+        if lab[sj, si]:
+            continue
+        n_lab += 1; stack = [(sj, si)]; lab[sj, si] = n_lab; comp = []
+        while stack:
+            j, i = stack.pop(); comp.append((j, i))
+            for dj_ in (-1, 0, 1):
+                for di_ in (-1, 0, 1):
+                    y, x = j + dj_, i + di_
+                    if 0 <= y < ny and 0 <= x < nx and ridge[y, x] and not lab[y, x]:
+                        lab[y, x] = n_lab; stack.append((y, x))
+        if len(comp) >= 7:
+            for j, i in comp:
+                keep[j, i] = True
+    fj_, fi_ = np.where(keep)
     fronts = [[round(float(gla[j]), 4), round(float(glo[i]), 4), round(float(g[j, i]), 3)] for j, i in zip(fj_, fi_)]
     v = np.clip(np.round((np.where(land, 0, final) + 5) * 100), 0, 65535).astype(np.uint32)
     code = np.where(land, 255, np.where(obs, np.clip(np.round(age), 1, 254), 0)).astype(np.uint8)
