@@ -161,7 +161,7 @@ ol.plan b.stop{color:var(--accent)}ol.plan{margin:10px 0 6px;padding-left:22px;l
     <div class="banner" id="mapbanner">Live satellite feeds couldn't be reached from this preview, so the map shows a made-up sample ocean. Open the file directly in your browser to get real data.</div>
     <div class="status" id="mapstatus"></div>
     <div class="lyrs">
-      <button class="lyr on" data-l="score">Hotspots</button><button class="lyr" data-l="chart">Chart</button><button class="lyr" data-l="fc">SST forecast</button><button class="lyr" data-l="sst">SST</button><button class="lyr" data-l="front">Fronts</button><button class="lyr" data-l="anom">SST anomaly</button><button class="lyr" data-l="ssh">Sea level / eddies</button><button class="lyr" data-l="chl">Chlorophyll</button><button class="lyr" data-l="clarity">Water clarity</button><button class="lyr" data-l="tc">True colour</button><button class="lyr" data-l="hima">Hourly SST</button><button class="lyr" data-l="conv">Upwelling / convergence</button><button class="lyr" data-l="curr">Current speed</button><button class="lyr" data-l="change">5-day change</button>
+      <button class="lyr on" data-l="score">Hotspots</button><button class="lyr" data-l="chart">Chart</button><button class="lyr" data-l="fc">SST forecast</button><button class="lyr" data-l="sharp">Sharp SST</button><button class="lyr" data-l="sst">SST daily</button><button class="lyr" data-l="front">Fronts</button><button class="lyr" data-l="anom">SST anomaly</button><button class="lyr" data-l="ssh">Sea level / eddies</button><button class="lyr" data-l="chl">Chlorophyll</button><button class="lyr" data-l="clarity">Water clarity</button><button class="lyr" data-l="tc">True colour</button><button class="lyr" data-l="hima">Hourly SST</button><button class="lyr" data-l="conv">Upwelling / convergence</button><button class="lyr" data-l="curr">Current speed</button><button class="lyr" data-l="change">5-day change</button>
     </div>
     <div class="days" id="fcdays" hidden></div>
     <div class="days" id="tcbar" hidden></div>
@@ -591,6 +591,10 @@ function analyse(D){
   if(D.acspo){const r=gradFronts(fillGaps(Float32Array.from(D.acspo),D.land,2)),G=A.fr[L].g,gv=[...G].filter(x=>!isNaN(x)).sort((a,b)=>a-b),gmin=gv[Math.floor(gv.length*.6)]||0;
     for(let j=2;j<NY-2;j++)for(let i=2;i<NX-2;i++){const n=ix(i,j);if(!r[n]||isNaN(D.acspo[n]))continue;let ok=false;
       for(let b=-2;b<=2&&!ok;b++)for(let a=-2;a<=2;a++)if(G[ix(i+a,j+b)]>=gmin){ok=true;break;}if(ok)A.cc[L][n]=1;}}
+  if(D.sharp){const m=D.sharp.meta;let added=0;   // fronts traced on raw 750 m passes from the last 24 h are added to today's front map
+    for(const[la,lo]of m.fronts){const sj=Math.floor((m.lat1-la)/m.res),si=Math.floor((lo-m.lon0)/m.res),c=D.sharp.code[sj*m.nx+si];if(!(c>=1&&c<=24))continue;
+      const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res);if(i<0||j<0||i>=NX||j>=NY)continue;const n=ix(i,j);if(!A.cc[L][n]&&!D.land[n]){A.cc[L][n]=1;added++;}}
+    A.sharpFrontsAdded=added;}
   A.ccFreq=new Float32Array(NN);for(const e of A.cc)for(let n=0;n<NN;n++)A.ccFreq[n]+=e[n]/A.cc.length;
   A.ccFreqS=smooth(A.ccFreq,2);
   A.frontDist=distKm(A.cc[L]);
@@ -718,6 +722,7 @@ const SCR=[[8,24,44],[20,70,110],[30,150,150],[46,230,197],[255,200,70],[255,110
 const CUR=[[12,30,60],[20,80,140],[40,160,170],[150,210,90],[250,200,60],[240,90,50]];
 const CLR=[[10,40,130],[20,100,190],[60,170,170],[150,180,90],[150,120,60]];
 
+const D_SHARP=A=>A&&A.sharp&&A.sharp.meta;
 function layerDefs(A){const L=A.sst.length-1,d=Math.min(MAP.day,L);
   let lo=Infinity,hi=-Infinity;for(const f of A.sst)for(const v of f)if(!isNaN(v)){lo=Math.min(lo,v);hi=Math.max(hi,v);}
   return{
@@ -730,6 +735,8 @@ function layerDefs(A){const L=A.sst.length-1,d=Math.min(MAP.day,L);
     conv:A.convN?{f:A.convN,col:v=>ramp(DIV,(v+1)/2),pal:t=>ramp(DIV,t),lg:["Upwelling","Converging"],title:"Surface convergence and upwelling",note:"Red: currents pushing together, which stacks bait, weed and scum lines. Blue: water spreading apart, drawing cooler nutrient-rich water up from below."}:null,
     curr:A.speed?{f:A.speed,col:v=>ramp(CUR,v/1.5),pal:t=>ramp(CUR,t),lg:["0 kn","1.5 kn+"],title:"Surface current speed (24 h mean)"}:null,
     front:{f:A.ccFreqS,col:v=>ramp(FRN,v*2.5),pal:t=>ramp(FRN,t),lg:["Rare","Every day"],title:"Front frequency, last 6 days"},
+    sharp:D_SHARP(A)?{sharp:1,f:null,lo,hi,col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:"Sharp SST: raw VIIRS passes at 750 m",
+      note:(m=>`Built from ${m.passes.length} raw NOAA-20/21 passes in the last 36 h, newest pixel wins (${m.passes.slice(0,4).map(p=>`${p.sat==="N21"?"NOAA-21":"NOAA-20"} ${new Date(p.time).toLocaleString("en-NZ",{timeZone:NZTZ,weekday:"short",hour:"numeric",minute:"2-digit"})}${p.night?" night":""}`).join(", ")}${m.passes.length>4?"...":""}). Greyed areas were under cloud and are filled from the daily MUR. Fine white lines: fronts traced at 750 m.`)(MAP.A.sharp.meta)}:null,
     tc:{tc:1,f:null,pal:t=>[20+t*200,60+t*160,120+t*100],lg:["",""],title:"True colour satellite photo (NASA, 375 m VIIRS)"},
     hima:A.hima?{f:A.hima,col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:"Hourly SST, Himawari-9 (cloud gaps dark)"}:null,
     change:{f:A.change,col:v=>ramp(DIV,(v+1.5)/3),pal:t=>ramp(DIV,t),lg:["-1.5°C","+1.5°C"],title:"5-day SST change"},
@@ -858,6 +865,9 @@ function draw(){
   const drawB=(k,op)=>{if(!BI)return;g.save();if(op)g.globalCompositeOperation=op,g.globalAlpha=.5;g.save();clipOut();g.drawImage(BI[k],bx,by,bw,bh);g.restore();
     for(const t of TL)g.drawImage(t.img[k],X(t.b.w),Y(t.b.n),X(t.b.e)-X(t.b.w),Y(t.b.s)-Y(t.b.n));g.restore();};
   if(MAP.layer==="tc"){drawB("chart");drawTC(g,X,Y,V,W);}
+  else if(MAP.layer==="sharp"&&li.sharp){drawB("chart");const SH=A.sharp,m=SH.meta;g.imageSmoothingEnabled=VIEW.z<3;g.drawImage(sharpImage(SH,li.lo,li.hi),X(m.lon0),Y(m.lat1),m.nx*m.res*kx,m.ny*m.res*ky);g.imageSmoothingEnabled=true;
+    if(BI&&MAP.showRelief)drawB("relief","multiply");
+    if(MAP.showFronts){g.fillStyle="rgba(255,255,255,.9)";const r=Math.max(.7,Math.min(2.2,m.res*kx*.55));for(const[la,lo]of m.fronts){const x=X(lo),y=Y(la);if(x<0||y<0||x>W||y>H)continue;g.fillRect(x-r,y-r,2*r,2*r);}}}
   else if(MAP.layer==="chart"&&BI)drawB("chart");
   else{drawB("chart");g.drawImage(dataImage(li,A),X(AREA.lon0-AREA.res/2),Y(AREA.lat1+AREA.res/2),NX*cw,NY*ch);
     if(BI&&MAP.showRelief)drawB("relief","multiply");}
@@ -895,7 +905,7 @@ function draw(){
   if(MAP.showEddies&&A.eddyW){segs(A.eddyW,.5,"rgba(255,80,60,.95)",2.2,[7,4]);segs(A.eddyC,.5,"rgba(80,160,255,.95)",2.2,[7,4]);
     g.font="bold 11px sans-serif";for(const e of A.eddyList){const x=X(e.lon),y=Y(e.lat);if(!inView(x,y))continue;const t=(e.sign>0?"Warm eddy":"Cold eddy")+` ~${Math.round(e.km)} km`+(e.conf?" ✓ satellite":"");
       g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.75)";g.strokeText(t,x-30,y);g.fillStyle=e.sign>0?"#ff9a85":"#9cc8ff";g.fillText(t,x-30,y);}}
-  if(MAP.showFronts&&!chartMode){const e=A.cc[Math.min(MAP.day,A.cc.length-1)],r=Math.min(3,Math.max(.9,cw*.35));g.fillStyle="rgba(255,255,255,.85)";
+  if(MAP.showFronts&&!chartMode&&MAP.layer!=="sharp"){const e=A.cc[Math.min(MAP.day,A.cc.length-1)],r=Math.min(3,Math.max(.9,cw*.35));g.fillStyle="rgba(255,255,255,.85)";
     for(let n=0;n<NN;n++)if(e[n]&&!A.land[n]){const i=n%NX,j=(n-i)/NX,x=X(lonOf(i)),y=Y(latOf(j));if(!inView(x,y))continue;g.beginPath();g.arc(x,y,r,0,7);g.fill();}
     if(A.chlEdge&&MAP.layer==="chl"){g.fillStyle="rgba(255,0,200,.8)";for(let n=0;n<NN;n++)if(A.chlEdge[n]){const i=n%NX,j=(n-i)/NX;g.fillRect(X(lonOf(i))-cw*.3,Y(latOf(j))-ch*.3,cw*.6,ch*.6);}}}
   // graticule adapts to zoom
@@ -1084,6 +1094,15 @@ function mapUpdate(){if(!MAP.ready)return;MAP.score=scoreField(MAP.A,state.sp);M
   MAP.wps=waypoints(MAP.A,MAP.score);MAP.sel=null;draw();wpCards();}
 
 /* ---------- loading ---------- */
+/* sharp SST: 750 m composite of raw VIIRS passes, 16-bit in R/G (°C*100+500), B = hours since the pass (0 = MUR fill, 255 = land) */
+function loadSharp(meta){return new Promise((res,rej)=>{const im=new Image();im.onload=()=>{const c=document.createElement("canvas");c.width=meta.nx;c.height=meta.ny;
+    const g=c.getContext("2d",{willReadFrequently:true});g.drawImage(im,0,0);const px=g.getImageData(0,0,meta.nx,meta.ny).data,N=meta.nx*meta.ny,T=new Float32Array(N),code=new Uint8Array(N);
+    for(let k=0;k<N;k++){code[k]=px[k*4+2];T[k]=code[k]===255?NaN:((px[k*4]<<8)|px[k*4+1])/100-5;}res({meta,T,code});};im.onerror=rej;im.src="data/sharp.png?"+encodeURIComponent(meta.updated);});}
+function sharpImage(SH,lo,hi){const key=lo+"|"+hi;if(SH.imgKey===key)return SH.img;const m=SH.meta,c=document.createElement("canvas");c.width=m.nx;c.height=m.ny;
+  const g=c.getContext("2d"),id=g.createImageData(m.nx,m.ny);
+  for(let k=0;k<m.nx*m.ny;k++){if(SH.code[k]===255)continue;let col=turbo((SH.T[k]-lo)/(hi-lo||1));if(SH.code[k]===0)col=col.map(v=>v*.62+48);   // cloud gaps filled from MUR: greyed
+    id.data[k*4]=col[0];id.data[k*4+1]=col[1];id.data[k*4+2]=col[2];id.data[k*4+3]=255;}
+  g.putImageData(id,0,0);SH.img=c;SH.imgKey=key;return c;}
 async function loadMap(){
   if(MAP.loading||MAP.ready)return;MAP.loading=true;const st=$("mapstatus"),src=MAP.src=[];
   st.innerHTML='<span class="spin"></span>Downloading 1 km satellite SST for the last 6 days...';
@@ -1092,7 +1111,8 @@ async function loadMap(){
     const local=async f=>{try{const r=await fetch("data/"+f,{cache:"no-store"});return r.ok?await r.json():null;}catch(e){return null;}};
     const blk=o=>({times:o.times,fields:o.frames.map(v=>jsonGrid({lats:o.lats,lons:o.lons,values:v}))});
     const curP=loadOpenMeteoCurrents().catch(()=>null);
-    const [OJ,BF0,hj,mj,cj,fj,rj,aj]=await Promise.all([local("ocean.json"),loadFineBathy(),local("himawari.json"),local("model.json"),local("currents.json"),local("forecast.json"),local("reserves.json"),local("alerts.json")]);
+    const [OJ,BF0,hj,mj,cj,fj,rj,aj,shj]=await Promise.all([local("ocean.json"),loadFineBathy(),local("himawari.json"),local("model.json"),local("currents.json"),local("forecast.json"),local("reserves.json"),local("alerts.json"),local("sharp.json")]);
+    const sharpP=shj?loadSharp(shj).catch(()=>null):Promise.resolve(null);
     setReserves(rj);window.ALERTS=aj;MAP.updated=OJ&&OJ.updated;
     MAP.BF=BF0;
     let S,times,cp=null,kp=null,hp=null,clp=null;
@@ -1147,7 +1167,10 @@ async function loadMap(){
     if(chl&&OJ.chl_age){chlAgeG=jsonGrid({lats:OJ.chl.lats,lons:OJ.chl.lons,values:OJ.chl_age});}
     const kdAgeG=kd&&OJ.kd_age?jsonGrid({lats:OJ.kd.lats,lons:OJ.kd.lons,values:OJ.kd_age}):null;
     if(sla&&OJ.sla_label)src.push({ok:1,name:"Satellite altimetry (eddy check)",detail:`${OJ.sla_label}, to ${OJ.sla.times[OJ.sla.times.length-1]}`});
-    D={sst:S.fields,times,chl,chlAge:chlAgeG,kdAge:kdAgeG,depth,land,curr:cur,mu,mv,eta,wind,fcDelta,fcDates,sla,clim,kd,hima,acspo,himaCov:hj?hj.coverage:0,sample:false};
+    const sharp=await sharpP;
+    if(sharp){const m=sharp.meta,last=m.passes.map(p=>p.time).sort().pop();src.push({ok:1,name:"Sharp SST, raw VIIRS passes",detail:`NOAA-20/21 at 750 m, ${m.passes.length} passes, newest ${last?last.replace("T"," ").replace("Z"," UTC"):"?"}; ${Math.round(m.observed*100)}% of the sea seen directly, the rest filled from MUR`});}
+    else src.push({ok:0,name:"Sharp SST, raw VIIRS passes",detail:"Comes from the hourly server job"});
+    D={sst:S.fields,times,chl,chlAge:chlAgeG,kdAge:kdAgeG,depth,land,curr:cur,mu,mv,eta,wind,fcDelta,fcDates,sla,clim,kd,hima,acspo,sharp,himaCov:hj?hj.coverage:0,sample:false};
   }catch(e){D=sampleData();MAP.src=[{sample:1,name:"Sample data",detail:"Live feeds unreachable from this preview. Open the file directly in a browser."}];}
   const BF=D.sample?null:MAP.BF;
   MAP.contours=buildContours(BF||{nx:NX,ny:NY,lat1:AREA.lat1,lon0:AREA.lon0,res:AREA.res,depth:D.depth});
@@ -1518,10 +1541,10 @@ function optimise(C,P,W,forced){let route=forced?[forced]:[];const ok=r=>schedul
     let improved=true;while(improved){improved=false;const cur=routeValue(route,P,W);for(let i=0;i<route.length-1;i++)for(let j=i+1;j<route.length;j++){
       const r=route.slice(0,i).concat(route.slice(i,j+1).reverse(),route.slice(j+1));if(!ok(r))continue;const rv=routeValue(r,P,W);
       if(rv.v>cur.v+1e-6||(rv.v>=cur.v-1e-6&&rv.S.home<cur.S.home-6e4)){route=r;improved=true;break;}}}}
-  // spare time: stay longer at the best stops, favouring ones that line up with a bite period (up to 3 extra hours each)
-  for(let pass=0;pass<3;pass++){const slack=(W.back-schedule(route,P,W).home)/6e4-20;if(slack<20||!route.length)break;const S=routeValue(route,P,W).S;
-    const ranked=S.legs.filter(L=>!(L.c.extra>=180)).map(L=>({L,f:biteBonus(W,L.arr,L.end+Math.min(180,slack)*6e4).f*L.c.v})).sort((a,b)=>b.f-a.f);if(!ranked.length)break;
-    const pick=ranked[0].L.c,extra=Math.min(180-(pick.extra||0),slack);
+  // spare time: stay longer at the best stops, favouring ones that line up with a bite period (up to 5 extra hours each)
+  for(let pass=0;pass<6;pass++){const slack=(W.back-schedule(route,P,W).home)/6e4-20;if(slack<20||!route.length)break;const S=routeValue(route,P,W).S;
+    const ranked=S.legs.filter(L=>!(L.c.extra>=300)).map(L=>({L,f:biteBonus(W,L.arr,L.end+Math.min(300,slack)*6e4).f*L.c.v})).sort((a,b)=>b.f-a.f);if(!ranked.length)break;
+    const pick=ranked[0].L.c,extra=Math.min(300-(pick.extra||0),slack);
     route=route.map(c=>c===pick?Object.assign(Object.create(Object.getPrototypeOf(c)),c,{fish:c.fish+extra,extra:(c.extra||0)+extra}):c);}
   return route;}
 const ANCHORS=[["Mayor Island",-37.285,176.254,2.1],["Motiti Island",-37.635,176.42,1.3],["Slipper Island",-37.05,175.94,.8],["Alderman Islands",-36.965,176.08,1.0],
@@ -1539,7 +1562,10 @@ function dayItems(route,S,W,P,startLbl,endLbl,first){const items=[],L0=S.legs[0]
   let prev=P;S.legs.forEach((L,k)=>{const c=L.c,bite=L.bite?` <span class="prime">${L.bite==="Dawn"?"dawn bite":L.bite==="Dusk"?"evening bite":L.bite+" bite period"}</span>`:"";
     const how=(c.extra?`spend about ${(c.fish/60).toFixed(1).replace(/\.0$/,"")} h here, `:"")+(c.w?`troll the ${c.w.len.toFixed(1)} nm zig-zag course${c.extra?" and repeat it":""} (start ${fmtLL(c.la,c.lo)}, heading ${p3(c.w.head)}°T${c.w.warm?`, warm water to ${c.w.warm}`:""})`:`troll over and around it${c.ap?" (approximate position)":""}`);
     items.push(`<b>${tmF(L.arr)} to ${tmF(L.end)}</b> <b class="stop">${c.n}</b>${k?` (${legF(prev,[c.la,c.lo])})`:""}: ${how}. ${reasonF(c.e)}.${bite}`);prev=[c.la2,c.lo2];});
-  items.push(`<b>${tmF(S.home-S.dh/PSET.cruise*36e5)}</b> Lines up, ${legF(prev,W.E||P)} to ${endLbl}; there about <b>${tmF(S.home)}</b>.`);return items;}
+  items.push(`<b>${tmF(S.home-S.dh/PSET.cruise*36e5)}</b> Lines up, ${legF(prev,W.E||P)} to ${endLbl}; there about <b>${tmF(S.home)}</b>.`);
+  const spare=(W.back-S.home)/36e5;if(spare>=1.5){const last=S.legs[S.legs.length-1];
+    items.push(`You'd have about ${spare.toFixed(1).replace(/\.0$/,"")} h spare before you need to be back. ${last&&last.c.w?`Stay longer on ${last.c.n} (repeat its course)`:last?`Stay longer at ${last.c.n}`:"Fish longer"}${last&&last.bite!=="Dusk"&&W.ss&&S.home<W.ss?" and you'll catch more of the evening bite":""}, or keep the lures out on the run home.`);}
+  return items;}
 function planButtons(name){const out=$("planout");
   $("planmap").onclick=()=>{document.querySelector('.tab[data-t="map"]').click();const la=MAP.plan.pts.map(p=>p[0]),lo=MAP.plan.pts.map(p=>p[1]);
     VIEW.clat=(Math.min(...la)+Math.max(...la))/2;VIEW.clon=(Math.min(...lo)+Math.max(...lo))/2;VIEW.z=Math.max(1,Math.min(12,.9*Math.min((AREA.lon1-AREA.lon0)/(Math.max(...lo)-Math.min(...lo)+.04),(AREA.lat1-AREA.lat0)/(Math.max(...la)-Math.min(...la)+.04))));redraw();$("mapcv").scrollIntoView({behavior:"smooth"});};
@@ -1574,7 +1600,7 @@ async function makePlan(text){const out=$("planout");out.innerHTML=`<div class="
   let html="",pts=[],tot=0;
   days.forEach((dd,k)=>{const endLbl=dd.last?homeLbl:`the anchorage on the ${dd.anchor.side} side of ${dd.anchor.name}`;
     const items=dayItems(dd.route,dd.S,dd.W,dd.start,dd.k===0&&startLbl===homeLbl?homeLbl:dd.sLbl,endLbl,k===0&&dd.sLbl===homeLbl);tot+=dd.S.dist;
-    html+=`<div class="why" style="margin-top:8px"><b>${nDays>1?`Day ${k+1} · `:""}${dayLblF(dd.W)}${k===0&&D?`, toward ${D.n}`:k===0&&!D?", best water within reach":""}</b> · ${dd.route.length} stops · ${dd.S.dist.toFixed(0)} nm</div><ol class="plan">${items.map(s=>`<li>${s}</li>`).join("")}</ol>`;
+    html+=`<div class="why" style="margin-top:8px"><b>${nDays>1?`Day ${k+1} · `:""}${dayLblF(dd.W)}${k===0&&D?`, toward ${D.n}`:k===0&&!D?", best water within reach":""}</b> · ${dd.route.length} stop${dd.route.length===1?"":"s"} · ${dd.S.dist.toFixed(0)} nm</div><ol class="plan">${items.map(s=>`<li>${s}</li>`).join("")}</ol>`;
     if(dd.anchor){const w=dd.anchor.w;html+=`<div class="why">🌙 <b>Overnight:</b> anchor in the lee of ${dd.anchor.name}, on the ${dd.anchor.side} side${w?` (wind ${Math.round(w.kn)} kn from the ${comp16(w.from)} that day, ECMWF)`:""}. Check the overnight forecast and local knowledge before choosing your bay. In the morning, plan again with "from ${dd.anchor.name.split(" (")[0]}" for fresh satellite data.</div>`;}
     pts.push(...(k===0?[[dd.start[0],dd.start[1],k===0?"Start":""]]:[]),...dd.route.flatMap(c=>c.w?[[c.la,c.lo,c.n],[c.la2,c.lo2,""]]:[[c.la,c.lo,c.n]]),[dd.W.E[0],dd.W.E[1],dd.last?"":`Anchor ${dd.anchor.name}`]);});
   const top=MAP.wps[0];let heads="";if(D&&top&&!days.some(dd=>dd.route.some(c=>c.w===top))){const ev=evalSpot(top.lat,top.lon,1);if(ev&&T&&ev.s>T.e.s*1.25)heads=`<div class="why">Heads up: the best water on the map today is <b>WP1</b>, ${legF(P,[top.lat,top.lon])} from your start (${top.tag.toLowerCase()}). Leave the destination blank and I'll plan around it.</div>`;}
