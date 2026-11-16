@@ -283,8 +283,14 @@ def thredds_sector_frames(root, var, d0, pad=0.05, res=0.0075):
     lats = np.round(np.arange(la1, la0 - 1e-9, -res), 4); lons = np.round(np.arange(lo0, lo1 + 1e-9, res), 4)
     files = []
     for yr in sorted({d0.year, dt.date.today().year}):
-        t = requests.get(f"{B}/catalog/{root}/{yr}/catalog.html", timeout=60).text
-        for f in sorted(set(re.findall(r"([A-Za-z0-9_.\-]+\.nc)", t))):
+        try:
+            rq = requests.get(f"{B}/catalog/{root}/{yr}/catalog.html", timeout=60); rq.raise_for_status()
+            names = sorted(set(re.findall(r"([A-Za-z0-9_.\-]+\.nc)", rq.text)))
+        except Exception as e:                                        # server down: use the cut-outs already cached
+            pre, suf = f"{root}_{yr}_", f".{var}.npy"
+            names = sorted(fn[len(pre):-len(suf)] for fn in os.listdir(SECTOR_CACHE) if fn.startswith(pre) and fn.endswith(suf))
+            log(f"colour: {root} catalog unavailable ({str(e)[:50]}), using {len(names)} cached files")
+        for f in names:
             m = re.search(r"(?:C|V)(\d{4})(\d{3})", f)
             if m:
                 d = dt.date(int(m.group(1)), 1, 1) + dt.timedelta(days=int(m.group(2)) - 1)
@@ -1143,10 +1149,12 @@ def sharp():
                 continue
             path = f"swath{sat}VIIRSNRTL2PWW00/{d:%Y}/{d.timetuple().tm_yday:03d}"
             try:
-                cat = requests.get(f"https://coastwatch.noaa.gov/thredds/catalog/{path}/catalog.html", timeout=60).text
-            except Exception as e:
-                log("sharp:", sat, d.date(), "catalog failed", str(e)[:60]); continue
-            files = sorted(set(re.findall(r"(\d{14}-STAR-L2P[^'\"<>]*?\.nc)", cat)))
+                rq = requests.get(f"https://coastwatch.noaa.gov/thredds/catalog/{path}/catalog.html", timeout=60); rq.raise_for_status()
+                files = sorted(set(re.findall(r"(\d{14}-STAR-L2P[^'\"<>]*?\.nc)", rq.text)))
+            except Exception as e:                                    # server down: use the passes already gridded on earlier runs
+                stamp = f"{d:%Y%m%d}"
+                files = sorted(fn[len(sat) + 1:-4] for fn in os.listdir(L2P_CACHE) if fn.startswith(f"{sat}_{stamp}") and fn.endswith(".npy"))
+                log("sharp:", sat, d.date(), f"catalog unavailable ({str(e)[:40]}), using {len(files)} cached passes")
             for fn in files:
                 t = dt.datetime.strptime(fn[:14], "%Y%m%d%H%M%S")
                 if (now - t).total_seconds() > SHARP_HOURS * 3600 or t.hour not in (23, 0, 1, 2, 3, 11, 12, 13, 14, 15):
