@@ -174,13 +174,44 @@ ERDS = ["https://coastwatch.pfeg.noaa.gov/erddap/griddap/", "https://upwell.pfeg
         "https://oceanwatch.pifsc.noaa.gov/erddap/griddap/", "https://coastwatch.noaa.gov/erddap/griddap/", "https://coastwatch.pfeg.noaa.gov/erddap/griddap/"]   # last entry: retry the main server after the others
 
 
+_SRV_PATH = os.path.join(OUT, "servers.json")
+try:
+    _SRV = json.load(open(_SRV_PATH))
+except Exception:
+    _SRV = {}
+
+
+def _server_order(ds):
+    """Ask the server that last delivered this dataset first; servers that said 'not here' in the last 24 h go last
+    (not dropped, so a server that gains the dataset is picked up again within a day)."""
+    rec = _SRV.get(ds, {}); good = rec.get("good"); miss = rec.get("miss", {})
+    now = time.time()
+    recent_miss = {h for h, t in miss.items() if now - t < 86400}
+    order = sorted(ERDS, key=lambda e: (e.split("/")[2] != good, e.split("/")[2] in recent_miss))
+    return order
+
+
+def _server_note(ds, host, ok):
+    rec = _SRV.setdefault(ds, {"miss": {}})
+    if ok:
+        rec["good"] = host; rec.setdefault("miss", {}).pop(host, None)
+    else:
+        rec.setdefault("miss", {})[host] = time.time()
+    try:
+        with open(_SRV_PATH, "w") as f:
+            json.dump(_SRV, f, separators=(",", ":"))
+    except Exception:
+        pass
+
+
 def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
     """Download a box from NOAA ERDDAP as CSV; return lats (N to S), lons, times and one 2D grid per time."""
     import requests, io, csv
     la0, la1, lo0, lo1 = BOX["lat0"] - pad, BOX["lat1"] + pad, BOX["lon0"] - pad, BOX["lon1"] + pad
     last = None
     r = None
-    for erd in ERDS:
+    order = _server_order(ds)
+    for erd in order:
         for latc in (f"[({la0:.3f}):{stride}:({la1:.3f})]", f"[({la1:.3f}):{stride}:({la0:.3f})]"):
             q = var + time + ("[(0.0)]" if alt else "") + latc + f"[({lo0:.3f}):{stride}:({lo1:.3f})]"
             try:
@@ -189,12 +220,15 @@ def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
             except Exception as e:
                 last = e; r = None
                 log("  ", erd.split("/")[2], str(e)[:60])
-                if any(x in str(e) for x in ("403", "500", "503", "timed out")):
+                if any(x in str(e) for x in ("403", "500", "502", "503", "timed out", "skipped")):
                     break          # server refusing us: try the next mirror
-        if r is None and erd == ERDS[-2]:
+        if r is None and last is not None and "404" in str(last) and any(k in (getattr(getattr(last, "response", None), "text", "") or "") for k in ("unknown datasetID", "Resource not found")):
+            _server_note(ds, erd.split("/")[2], False)          # this server doesn't hold the dataset (not just 'no data for that day')
+        if r is None and erd == order[-2]:
             __import__("time").sleep(60)
         if r is not None:
-            if erd != ERDS[0]:
+            _server_note(ds, erd.split("/")[2], True)
+            if erd != order[0]:
                 log("  (from mirror", erd.split("/")[2] + ")")
             break
     if r is None:
