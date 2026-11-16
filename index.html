@@ -1503,7 +1503,10 @@ function routeDepthOut(P,T,depth=100){const d=hav(P[0],P[1],T[0],T[1])/NM;for(le
 let PSET={leave:"dawn",back:"sunset",cruise:20,troll:7};try{Object.assign(PSET,JSON.parse(localStorage.getItem("bwb-pset")||"{}"));}catch(e){}
 const savePset=()=>{try{localStorage.setItem("bwb-pset",JSON.stringify(PSET));}catch(e){}};
 function dayWindow(offset=0,last=true){const now=Date.now(),hNZ=+new Date(now).toLocaleString("en-NZ",{timeZone:NZTZ,hour:"numeric",hour12:false});
-  const tomorrow=PSET.leave==="dawn"&&hNZ>=10||hNZ>=17,day0=nzMidnightUtc((tomorrow?1:0)+offset),ev=solunar(day0,BOP.lat,BOP.lon);
+  // plan today only if the chosen leave time is still ahead (or "leave now" before 5pm); otherwise plan tomorrow
+  const today0=nzMidnightUtc(0),evT=solunar(today0,BOP.lat,BOP.lon),srT=(evT.find(e=>e.label==="Sunrise")||{t:today0+6*36e5}).t;
+  const leaveToday=PSET.leave==="dawn"?srT-50*6e4:PSET.leave==="now"?now:today0+(+PSET.leave)*36e5;
+  const tomorrow=PSET.leave==="now"?hNZ>=17:leaveToday<now-15*6e4,day0=nzMidnightUtc((tomorrow?1:0)+offset),ev=solunar(day0,BOP.lat,BOP.lon);
   const sr=(ev.find(e=>e.label==="Sunrise")||{t:day0+6*36e5}).t,ss=(ev.find(e=>e.label==="Sunset")||{t:day0+20*36e5}).t;
   const leave=offset>0||PSET.leave==="dawn"?sr-50*6e4:PSET.leave==="now"?Math.max(now+20*6e4,day0+4*36e5):day0+(+PSET.leave)*36e5;
   const back=!last?ss-10*6e4:PSET.back==="sunset"?ss+20*6e4:day0+(+PSET.back)*36e5;
@@ -1722,7 +1725,7 @@ learnPanel();
 function offlineBanner(){const o=$("offline");if(navigator.onLine){o.hidden=true;return;}o.hidden=false;
   o.textContent=`Offline. Showing the last data saved on this phone${MAP.updated?` (satellite data fetched ${MAP.updated.slice(0,16).replace("T"," ")} UTC)`:""}. GPS, marks and the catch log still work.`;}
 window.addEventListener("online",offlineBanner);window.addEventListener("offline",offlineBanner);offlineBanner();
-if("serviceWorker" in navigator&&location.protocol==="https:")navigator.serviceWorker.register("sw.js").catch(()=>{});
+if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostname==="localhost"))navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
 </body>
 </html>
