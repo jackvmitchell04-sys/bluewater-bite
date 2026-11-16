@@ -1005,7 +1005,7 @@ function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
   if(c.land)rows.push("Land");
   else{rows.push(`<span class="tipT">${c.sst==null?"n/a":c.sst.toFixed(1)+"°C"}</span> <span class="tipm">${c.date||""}</span>`);
     if(c.fc!=null)rows.push(`Forecast ${MAP.A.fcDates[MAP.fcDay]}: ${c.fc.toFixed(1)}°C`);
-    if(c.hima!=null)rows.push(`Hourly SST ${c.hima.toFixed(1)}°C`);
+    if(c.hima!=null)rows.push(`Hourly SST ${c.hima.toFixed(1)}°C${c.sst!=null&&c.hima-c.sst>.8?' <span class="tipm">(skin warmed by afternoon sun on a calm day; the water below is closer to the daily figure)</span>':""}`);
     if(c.anom!=null)rows.push(`${c.anom>=0?"+":""}${c.anom.toFixed(1)}°C vs normal`);
     if(c.dep!=null)rows.push(`Depth ${Math.round(c.dep)} m`);
     if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³${c.chlAge!=null?` <span class="tipm">(${c.chlAge<.5?"seen today":`seen ${Math.round(c.chlAge)} d ago, moved with the current`})</span>`:""}`);
@@ -1489,7 +1489,7 @@ function evalSpot(la,lo,r=1.5){const A=MAP.A,S=MAP.score,L=A.sst.length-1;let be
   if(A.convN&&A.convN[bk]>.5)why.push("currents converging, good for bait and weed lines");
   if(A.warmDist&&A.warmDist[bk]<10)why.push("the edge of a warm eddy");
   if(A.slope&&A.slope[bk]>.05)why.push("a steep drop-off");
-  const al=(window.ALERTS&&ALERTS.items||[]).find(x=>hav(x.lat,x.lon,la,lo)/NM<1.5);
+  const al=(window.ALERTS&&window.ALERTS.items||[]).find(x=>hav(x.lat,x.lon,la,lo)/NM<1.5);
   return{s:best,pct,n:bk,la:latOf((bk-bk%NX)/NX),lo:lonOf(bk%NX),sst,inRange:sst>=sp.min&&sst<=sp.max,why,alert:al};}
 function nearReserve(la,lo,nm=.6){if(reserveAt(la,lo))return true;for(let k=0;k<8;k++){const a=k*45*RAD,d=nm/60;if(reserveAt(la+Math.cos(a)*d,lo+Math.sin(a)*d/Math.cos(la*RAD)))return true;}return false;}
 function suits(t){return Object.values(SPECIES).filter(x=>t>=x.min&&t<=x.max).map(x=>x.name).slice(0,3);}
