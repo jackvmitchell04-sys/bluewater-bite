@@ -978,6 +978,145 @@ def dumping():
         json.dump({"source": "LINZ nautical chart dumping grounds (S-57 DMPGRD)", "items": items}, f, separators=(",", ":"))
 
 
+# ---------------------------------------------------------------- sharp SST: raw VIIRS passes at native 750 m
+L2P_SATS = ("N20", "N21")                     # S-NPP stopped producing L2P in 2026
+SHARP_RES = 0.0075                            # ~750 m, the VIIRS native pixel
+SHARP_HOURS = 36                              # passes older than this aren't used
+
+
+def _nanbox(a, r):
+    """NaN-aware box mean"""
+    ok = np.isfinite(a)
+    s = _box(np.where(ok, a, 0.0), r); c = _box(ok.astype(np.float64), r)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(c > 0.05, s / c, np.nan)
+
+
+def sharp():
+    """Raw VIIRS swath passes (ACSPO L2P, native 750 m) from NOAA-20 and NOAA-21, cut to the Bay over OPeNDAP.
+    Newest clear pixel wins (36 h window); each pass is levelled to MUR at 30 km scale so day and night passes
+    don't seam, while keeping its fine detail. Cloud gaps are filled from MUR. Fronts are traced on the sharp field."""
+    import netCDF4, re, requests
+    from PIL import Image
+    with open(os.path.expanduser("~/.dodsrc"), "w") as f:            # no OPeNDAP call may hang the job
+        f.write("HTTP.TIMEOUT=60\nHTTP.CONNECTTIMEOUT=15\n")
+    idx_path = os.path.join(OUT, "l2p_index.json")
+    try:
+        idx = json.load(open(idx_path))
+    except Exception:
+        idx = {}
+    now = dt.datetime.utcnow()
+    nx, ny = int(round((BOX["lon1"] - BOX["lon0"]) / SHARP_RES)), int(round((BOX["lat1"] - BOX["lat0"]) / SHARP_RES))
+    passes = []
+    t_start = time.time()
+    for sat in L2P_SATS:
+        for back in (0, 1, 2):
+            d = now - dt.timedelta(days=back)
+            if back == 2 and d < now - dt.timedelta(hours=SHARP_HOURS + 24):
+                continue
+            path = f"swath{sat}VIIRSNRTL2PWW00/{d:%Y}/{d.timetuple().tm_yday:03d}"
+            try:
+                cat = requests.get(f"https://coastwatch.noaa.gov/thredds/catalog/{path}/catalog.html", timeout=60).text
+            except Exception as e:
+                log("sharp:", sat, d.date(), "catalog failed", str(e)[:60]); continue
+            files = sorted(set(re.findall(r"(\d{14}-STAR-L2P[^'\"<>]*?\.nc)", cat)))
+            for fn in files:
+                t = dt.datetime.strptime(fn[:14], "%Y%m%d%H%M%S")
+                if (now - t).total_seconds() > SHARP_HOURS * 3600 or t.hour not in (23, 0, 1, 2, 3, 11, 12, 13, 14, 15):
+                    continue                                              # NZ day passes ~23-03 UTC, night ~11-15 UTC
+                key = f"{sat}/{fn[:14]}"
+                url = f"https://coastwatch.noaa.gov/thredds/dodsC/{path}/{fn}"
+                info = idx.get(key, "new")
+                if info is None:
+                    continue                                              # scanned before, misses the Bay
+                if time.time() - t_start > 9 * 60:
+                    log("sharp: time budget used"); break
+                try:
+                    nc = netCDF4.Dataset(url)
+                    if info == "new":
+                        st = 48
+                        la = np.ma.filled(nc.variables["lat"][::st, ::st], np.nan); lo = np.ma.filled(nc.variables["lon"][::st, ::st], np.nan)
+                        m = (la > BOX["lat0"] - .3) & (la < BOX["lat1"] + .3) & (lo > BOX["lon0"] - .3) & (lo < BOX["lon1"] + .3)
+                        if not m.any():
+                            idx[key] = None; nc.close(); continue
+                        jj, ii = np.where(m); R, C = nc.variables["lat"].shape
+                        info = [max(0, (jj.min() - 1) * st), min(R, (jj.max() + 2) * st), max(0, (ii.min() - 1) * st), min(C, (ii.max() + 2) * st)]
+                        idx[key] = info
+                    r0, r1, c0, c1 = info
+                    la = np.ma.filled(nc.variables["lat"][r0:r1, c0:c1], np.nan); lo = np.ma.filled(nc.variables["lon"][r0:r1, c0:c1], np.nan)
+                    sst = np.ma.filled(nc.variables["sea_surface_temperature"][0, r0:r1, c0:c1].astype(np.float64), np.nan)
+                    bias = np.ma.filled(nc.variables["sses_bias"][0, r0:r1, c0:c1].astype(np.float64), 0.0)
+                    ql = np.ma.filled(nc.variables["quality_level"][0, r0:r1, c0:c1], 0)
+                    nc.close()
+                except Exception as e:
+                    log("sharp:", key, "failed", str(e)[:80]); continue
+                good = (ql >= 4) & np.isfinite(sst)
+                good &= _box(good.astype(np.float64), 1) > 0.99           # drop pixels touching cloud: edges are often contaminated
+                if good.sum() < 200:
+                    continue
+                v = sst[good] - bias[good] - 273.15
+                gi = np.round((lo[good] - BOX["lon0"]) / SHARP_RES).astype(int); gj = np.round((BOX["lat1"] - la[good]) / SHARP_RES).astype(int)
+                k = (gi >= 0) & (gi < nx) & (gj >= 0) & (gj < ny) & (v > 5) & (v < 32)
+                if k.sum() < 200:
+                    continue
+                S = np.zeros((ny, nx)); N = np.zeros((ny, nx))
+                np.add.at(S, (gj[k], gi[k]), v[k]); np.add.at(N, (gj[k], gi[k]), 1)
+                with np.errstate(invalid="ignore"):
+                    G = np.where(N > 0, S / N, np.nan)
+                passes.append({"sat": sat, "t": t, "grid": G, "night": t.hour in (11, 12, 13, 14, 15)})
+                log(f"sharp: {sat} {t:%d %H:%M}Z {np.isfinite(G).mean():.0%} of the Bay clear")
+    # forget scans older than 4 days
+    cutoff = (now - dt.timedelta(days=4)).strftime("%Y%m%d%H%M%S")
+    idx = {k: v for k, v in idx.items() if k.split("/")[1] >= cutoff}
+    with open(idx_path, "w") as f:
+        json.dump(idx, f, separators=(",", ":"))
+    if not passes:
+        raise RuntimeError("no clear VIIRS passes over the Bay in the last 36 h")
+    # MUR background on the sharp grid
+    o = json.load(open(os.path.join(OUT, "ocean.json")))["sst"]
+    mla, mlo = np.array(o["lats"]), np.array(o["lons"]); M = np.array(o["frames"][-1], dtype=np.float64)
+    gla = BOX["lat1"] - (np.arange(ny) + 0.5) * SHARP_RES; glo = BOX["lon0"] + (np.arange(nx) + 0.5) * SHARP_RES
+    fj = np.interp(-gla, -mla, np.arange(len(mla))); fi = np.interp(glo, mlo, np.arange(len(mlo)))
+    j0 = np.clip(np.floor(fj).astype(int), 0, len(mla) - 2); i0 = np.clip(np.floor(fi).astype(int), 0, len(mlo) - 2)
+    wj = (fj - j0)[:, None]; wi = (fi - i0)[None, :]
+    Mi = (M[j0][:, i0] * (1 - wj) * (1 - wi) + M[j0 + 1][:, i0] * wj * (1 - wi) + M[j0][:, i0 + 1] * (1 - wj) * wi + M[j0 + 1][:, i0 + 1] * wj * wi)
+    Mi = np.where(np.isfinite(Mi), Mi, _nanbox(Mi, 3))
+    # newest first; each pass levelled to MUR at ~30 km so passes join without seams
+    passes.sort(key=lambda p: p["t"], reverse=True)
+    out = np.full((ny, nx), np.nan); age = np.full((ny, nx), 255.0); used = []
+    for p in passes:
+        G = p["grid"]; G = np.where(np.isfinite(G), G, _nanbox(G, 1)) if np.isfinite(G).mean() > 0.02 else G   # fill single-pixel holes
+        off = _nanbox(G - Mi, 20); off = np.where(np.isfinite(off), off, np.nanmedian(G - Mi))
+        Gc = G - off
+        take = np.isfinite(Gc) & ~np.isfinite(out)
+        out[take] = Gc[take]; age[take] = (now - p["t"]).total_seconds() / 3600
+        if take.mean() > 0.002:
+            used.append({"sat": p["sat"], "time": p["t"].strftime("%Y-%m-%dT%H:%MZ"), "night": p["night"], "share": round(float(take.mean()), 3)})
+    obs = np.isfinite(out)
+    wgt = _box(obs.astype(np.float64), 2)                               # feather cloud edges into MUR
+    final = np.where(obs, out, Mi); final = wgt * np.where(obs, out, _nanbox(out, 3)) + (1 - wgt) * Mi
+    final = np.where(np.isfinite(final), final, Mi)
+    land = ~np.isfinite(Mi)
+    # fronts on the sharp field, observed water only: gradient ridges (non-max suppression across the front)
+    gy, gx = np.gradient(final, SHARP_RES * 111.32, SHARP_RES * 111.32 * np.cos(np.radians(-37)))
+    gy = -gy; g = np.hypot(gx, gy)
+    g[land | ~obs] = 0
+    thr = max(0.08, float(np.nanpercentile(g[obs & ~land], 92))) if (obs & ~land).sum() > 100 else 9
+    ang = np.arctan2(gy, gx); di = np.round(np.cos(ang)).astype(int); dj = -np.round(np.sin(ang)).astype(int)
+    J, I = np.mgrid[0:ny, 0:nx]
+    a = g[np.clip(J + dj, 0, ny - 1), np.clip(I + di, 0, nx - 1)]; b = g[np.clip(J - dj, 0, ny - 1), np.clip(I - di, 0, nx - 1)]
+    ridge = (g >= thr) & (g >= a) & (g >= b)
+    fj_, fi_ = np.where(ridge)
+    fronts = [[round(float(gla[j]), 4), round(float(glo[i]), 4), round(float(g[j, i]), 3)] for j, i in zip(fj_, fi_)]
+    v = np.clip(np.round((np.where(land, 0, final) + 5) * 100), 0, 65535).astype(np.uint32)
+    code = np.where(land, 255, np.where(obs, np.clip(np.round(age), 1, 254), 0)).astype(np.uint8)
+    Image.fromarray(np.stack([(v >> 8).astype(np.uint8), (v & 255).astype(np.uint8), code], -1), "RGB").save(os.path.join(OUT, "sharp.png"), optimize=True)
+    with open(os.path.join(OUT, "sharp.json"), "w") as f:
+        json.dump({"updated": now.strftime("%Y-%m-%dT%H:%MZ"), "res": SHARP_RES, "lon0": BOX["lon0"], "lat1": BOX["lat1"], "nx": nx, "ny": ny,
+                   "observed": round(float(obs[~land].mean()), 3), "passes": used, "front_threshold": round(thr, 3), "fronts": fronts[:30000]}, f, separators=(",", ":"))
+    log(f"sharp: {obs[~land].mean():.0%} of the sea from raw passes, {len(used)} passes, {len(fronts)} front pixels (>{thr:.2f} C/km)")
+
+
 # ---------------------------------------------------------------- true colour: clearest recent VIIRS photo
 TC_SATS = ("NOAA21", "NOAA20", "SNPP")
 
@@ -1089,7 +1228,7 @@ if __name__ == "__main__":
     ok = 0
     # most important first; slow model downloads are skipped if the morning budget runs out
     only = set(sys.argv[1:])
-    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, truecolour, reserves, dumping, currents, tides, model_grid, forecast):
+    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, sharp, truecolour, reserves, dumping, currents, tides, model_grid, forecast):
         if only and job.__name__ not in only:
             continue
         if job in (model_grid, forecast) and time.time() - T0 > 25 * 60:
