@@ -1,2 +1,3 @@
 alert_issue.md
 .cache/
+__pycache__/
