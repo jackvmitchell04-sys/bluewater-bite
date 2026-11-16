@@ -1,0 +1,30 @@
+name: Hourly SST refresh
+
+on:
+  schedule:
+    - cron: "7 */3 * * *"   # every 3 hours: newest Himawari-9 scans
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  himawari:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install xarray netCDF4 siphon numpy requests
+      - run: timeout 15m python scripts/fetch_data.py himawari || echo "ended early"
+      - name: Save
+        if: always()
+        run: |
+          git config user.name "bluewater-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/himawari.json
+          git diff --cached --quiet || git commit -m "Hourly SST $(date -u +%H:%M)"
+          git pull --rebase -q || true
+          git push

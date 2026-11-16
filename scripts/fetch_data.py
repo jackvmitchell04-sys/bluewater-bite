@@ -285,7 +285,12 @@ def ocean():
         out = {}
     out["updated"] = dt.datetime.utcnow().isoformat(timespec="minutes") + "Z"
     sst = None
-    for ds, stride, label in [("jplMURSST41", 2, "NASA JPL MUR, 1 km daily"), ("noaacwBLENDEDsstDNDaily", 1, "NOAA Geo-Polar Blended, 5 km daily (MUR server unavailable)")]:
+    prev_mur = out.get("sst") if str(out.get("sst_label", "")).startswith("NASA JPL MUR") else None
+    for ds, stride, label in [("jplMURSST41", 2, "NASA JPL MUR, 1 km daily"), ("jplMURSST41", 2, "NASA JPL MUR, 1 km daily"),
+                              ("noaacwBLENDEDsstDNDaily", 1, "NOAA Geo-Polar Blended, 5 km daily (MUR server unavailable)")]:
+        if ds.startswith("noaacw") and prev_mur and (dt.date.today() - dt.date.fromisoformat(prev_mur["times"][-1])).days <= 3:
+            # a 1-2 day old 1 km MUR beats a fresh 5 km blend for finding breaks
+            log("ocean: MUR refused; keeping the previous MUR download", prev_mur["times"][-1], "instead of the 5 km blend"); break
         try:
             lats, lons, times, sst = erddap_frames(ds, "analysed_sst", "[last-5:1:last]", stride=stride, pad=0.05)
             if np.nanmean(sst) > 200:
@@ -294,6 +299,8 @@ def ocean():
             log("ocean:", label, times[0], "to", times[-1]); break
         except Exception as e:
             log("ocean: SST", ds, "failed:", str(e)[:100]); sst = None
+            if ds == "jplMURSST41" and "403" in str(e):
+                __import__("time").sleep(90)       # the main NOAA server rate-limits; one patient retry
     if sst is None and out.get("sst"):
         o = out["sst"]; arr = np.array([[[np.nan if v is None else v for v in r] for r in f] for f in o["frames"]], float)
         OCEAN["sst"] = (o["lats"], o["lons"], o["times"], arr); log("ocean: SST kept from previous run", o["times"][-1])
@@ -531,7 +538,7 @@ def currents():
             return float(v) if np.isfinite(v) else None
     sla_fresh = "geo" not in OCEAN and "sla" in OCEAN and "sst" in OCEAN and (dt.date.fromisoformat(OCEAN["sst"][2][-1]) - dt.date.fromisoformat(OCEAN["sla"][2][-1])).days <= 10
     if not sla_fresh:
-        log("currents: altimetry stale or missing, Ekman drift only (detailed currents come from model_grid)")
+        log("currents: using NOAA blended geostrophic currents" if "geo" in OCEAN else "currents: no altimetry, Ekman drift only")
     if sla_fresh:
         lats, lons, times, sla = OCEAN["sla"]
         eta = sla[-1]; la = np.array(lats); lo = np.array(lons)
@@ -879,7 +886,10 @@ if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     ok = 0
     # most important first; slow model downloads are skipped if the morning budget runs out
+    only = set(sys.argv[1:])
     for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, reserves, currents, tides, model_grid, forecast):
+        if only and job.__name__ not in only:
+            continue
         if job in (model_grid, forecast) and time.time() - T0 > 25 * 60:
             print(f"{job.__name__} skipped: time budget used, keeping yesterday's file", file=sys.stderr); continue
         try:
