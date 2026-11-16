@@ -184,7 +184,7 @@ ol.plan b.stop{color:var(--accent)}ol.plan{margin:10px 0 6px;padding-left:22px;l
     <div class="cform" id="cform"><input id="cpos" placeholder="Position, e.g. 37 36.363 S 177 19.661 E"><input id="ctime" type="datetime-local"><select id="csp"></select><input id="cnum" type="number" min="1" max="20" value="1" title="How many" style="flex:0 0 70px"><input id="ckg" placeholder="Weight kg (optional)" inputmode="decimal"><label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="crel" checked> Released</label><input id="cnote" placeholder="Notes: lure, depth, birds..."><button class="btn pri" id="csave">Save catch</button><button class="btn" id="ccancel">Cancel</button></div>
     <div id="learnbox"></div><div id="cstats"></div><div id="clist"></div>
     <h3>Data inputs</h3><div id="sources"></div>
-    <h3>Waypoints and trolling courses</h3><p class="exp" style="margin:-4px 0 8px">Ranked 1 to 20 by how likely fish are along the whole trolling course today (WP1 is the best bet). The number on the right is that likelihood relative to WP1.</p>
+    <h3>Waypoints and trolling courses</h3><p class="exp" style="margin:-4px 0 8px">Ranked 1 to 20 by how likely fish are along the whole trolling course today (WP1 is the best bet). The rating is out of 10, where 10 means perfect conditions for NZ waters: a strong, settled temperature break with a colour edge, the right temperature and depth for the species, steep structure, a warm-eddy edge and converging current all in one place. Bite times aren't included, so check them separately.</p>
     <div class="actions"><button class="btn pri" id="gpxbtn">Download GPX for chartplotter</button><button class="btn" id="copybtn">Copy waypoints</button></div>
     <div id="wplist"></div>
   </div>
@@ -599,7 +599,7 @@ function analyse(D){
   if(D.clim){A.anom=new Float32Array(NN);for(let n=0;n<NN;n++)A.anom[n]=D.sst[L][n]-D.clim[n];}
   if(D.chl){A.chlLog=D.chl.map(c=>c.map(v=>v>0?Math.log10(v):NaN));const cl=A.chlLog[A.chlLog.length-1];A.chlG=gradient(cl).g;A.chlEdge=cayulaCornillon(smooth(cl),{minDT:0.08});A.chlDist=distKm(A.chlEdge);}
   if(D.mu){A.geo=flowFromUV(D.mu,D.mv,D.eta);A.slaL=D.eta;
-    const cv=smooth(A.geo.div.map(x=>-x),2),ab=[...cv].filter(x=>!isNaN(x)).map(Math.abs).sort((a,b)=>a-b),p95=ab[Math.floor(ab.length*.95)]||1;A.convN=cv.map(x=>x/p95);
+    const cv=smooth(A.geo.div.map(x=>-x),2),ab=[...cv].filter(x=>!isNaN(x)).map(Math.abs).sort((a,b)=>a-b),p95=ab[Math.floor(ab.length*.95)]||1;A.convN=cv.map(x=>x/p95);A.convAbs=cv.map(x=>x/3e-6);   // absolute: 3e-6 /s convergence is a strong surface convergence for a 1/12 deg model
     A.speed=new Float32Array(NN);for(let n=0;n<NN;n++)A.speed[n]=Math.hypot(D.mu[n],D.mv[n])*1.944;}
   else if(D.sla){A.geo=geostrophy(D.sla[D.sla.length-1]);A.slaL=D.sla[D.sla.length-1];}
   if(A.geo){
@@ -619,7 +619,7 @@ function scoreField(A,spKey){
       [.15,z<dp[0]?Math.max(.1,z/dp[0]):z>dp[1]?Math.max(.4,1-(z-dp[1])/dp[1]):1],[.10,Math.min(1,(A.slope[n]||0)/0.08)]];
     if(A.chlDist)parts.push([.10*(A.chlAge&&!isNaN(A.chlAge[n])?Math.max(0,1-A.chlAge[n]/6):1),Math.exp(-A.chlDist[n]/5)]);
     if(A.geo&&!isNaN(A.geo.slope[n])){const edge=Math.min(1,A.geo.slope[n]/4e-6)*(WARM_SP[spKey]?(A.slaL[n]>-0.02?1:.5):1);parts.push([.15,Math.max(edge,WARM_SP[spKey]?Math.exp(-A.warmDist[n]/15)*.8:0)]);}
-    if(A.convN&&!isNaN(A.convN[n]))parts.push([.08,Math.max(0,Math.min(1,A.convN[n]))]);
+    if(A.convAbs&&!isNaN(A.convAbs[n]))parts.push([.08,Math.max(0,Math.min(1,A.convAbs[n]))]);
     if(A.D_kd&&!isNaN(A.D_kd[n]))parts.push([.05*(A.kdAge&&!isNaN(A.kdAge[n])?Math.max(0,1-A.kdAge[n]/6):1),WARM_SP[spKey]?Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):.6]);
     let ws=0,v=0;for(const[w,x]of parts){ws+=w;v+=w*x;}v/=ws;
     let mod=.2+.8*temp;if(A.anom&&WARM_SP[spKey]&&!isNaN(A.anom[n]))mod*=1+0.08*Math.max(-1,Math.min(1.5,A.anom[n]));
@@ -699,7 +699,11 @@ function waypoints(A,score,n=WP_N){
     return{n:w+1,lat:la,lon:lo,score:Math.round(score[p.k]*100),sst:A.sst[L][p.k],brk:(A.fr[L].g[p.k]||0)*2,depth:A.depth[p.k],
       chl:A.chl?A.chl[A.chl.length-1][p.k]:null,change:A.change[p.k],tag:why.join(", "),line,course,ends:[course[0],course[course.length-1]],head:info.h,along:info.along,warm:info.warm,len,mode,
       src:mode==="front"?"following the temperature break":"following the depth contour",port,cv:courseVal(course,score[p.k])};})
-    .sort((a,b)=>b.cv-a.cv).map((w,k,all)=>({...w,n:k+1,score:Math.round(w.cv/(all[0].cv||1)*100)}));}
+    .sort((a,b)=>b.cv-a.cv).map((w,k)=>({...w,n:k+1,score:Math.round(w.cv*100),rate:Math.round(w.cv*10)}));}
+// 10/10 = every factor at its ideal at once: on a strong, settled temperature break with a colour edge, right species temperature
+// and depth, steep structure, a warm-eddy edge and converging current. Not relative to today's best.
+const RATE_WORDS=["Very low chance","Very low chance","Very low chance","Low chance","Low chance","Fair chance","Fair chance","Good chance","Very good chance","Excellent chance","Exceptional chance"];
+const rateWord=r=>RATE_WORDS[Math.max(0,Math.min(10,r))];
 
 /* ---------- formatting & palettes ---------- */
 const ddm=(v,pos,neg)=>{const a=Math.abs(v),d=Math.floor(a);return`${d}°${((a-d)*60).toFixed(3).padStart(6,"0")}'${v<0?neg:pos}`;};
@@ -1056,7 +1060,7 @@ function renderFcDays(){const el=$("fcdays"),A=MAP.A;if(MAP.layer!=="fc"||!A||!A
 
 function wpCards(){
   $("wplist").innerHTML=MAP.wps.map(w=>`<div class="wp ${MAP.sel===w.n?"sel":""}" data-n="${w.n}">
-    <div class="wph"><span class="wpn">WP${w.n}${w.n===1?" · best bet":""}</span><span class="wps" title="Fish likelihood along the whole course, best course = 100">${w.score}</span></div>
+    <div class="wph"><span class="wpn">WP${w.n}${w.n===1?" · best bet":""}</span><span class="wps" title="Out of 10, where 10 is perfect conditions for NZ waters">${w.rate}/10 · ${rateWord(w.rate)}</span></div>
     <div class="wpt">${w.tag}</div>
     <div class="wpc">${fmtLL(w.lat,w.lon)}</div>
     <div class="chips"><span class="chip">${w.sst.toFixed(1)}°C</span><span class="chip">Break ${w.brk.toFixed(2)}°C/2 km</span><span class="chip">${Math.round(w.depth)} m deep</span>${w.chl!=null&&!isNaN(w.chl)?`<span class="chip">Chl ${w.chl.toFixed(2)}</span>`:""}<span class="chip">5-day ${w.change>=0?"+":""}${w.change.toFixed(1)}°C</span></div>
