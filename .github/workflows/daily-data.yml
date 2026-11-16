@@ -4,7 +4,12 @@ on:
   schedule:
     - cron: "37 15 * * *"   # about 4:37am NZDT
     - cron: "37 23 * * *"   # about 12:37pm NZDT: picks up the day's new MUR, colour and model runs
-  workflow_dispatch: {}      # lets you run it by hand from the Actions tab
+  workflow_dispatch:         # lets you run it by hand from the Actions tab
+    inputs:
+      jobs:
+        description: "Only these steps (e.g. ocean alerts); blank = everything"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -20,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install xarray netCDF4 siphon numpy requests pillow tifffile imagecodecs
-      - run: timeout 45m python scripts/fetch_data.py || echo "fetch ended early, saving what finished"
+      - run: timeout 45m python scripts/fetch_data.py ${{ inputs.jobs }} || echo "fetch ended early, saving what finished"
       - name: Save new data
         if: always()
         run: |
