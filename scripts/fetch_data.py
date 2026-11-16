@@ -989,6 +989,19 @@ def _box(a, r):
     return (p[k:, k:] - p[:-k, k:] - p[k:, :-k] + p[:-k, :-k]) / (k * k)
 
 
+def _tc_enhance(out):
+    """contrast stretch over open water only, so colour edges show; land and cloud left as photographed"""
+    m = out.mean(2)
+    water = (m < 55) & (out[..., 2] >= out[..., 1])
+    sea = _box(water.astype(np.float32), 2)                          # soft mask: dark, blue-dominated open water (not land or cloud)
+    seapix = out[water]
+    if len(seapix) < 1000:
+        return out
+    lo = np.percentile(seapix, 1, axis=0); hi = np.percentile(seapix, 99.5, axis=0)
+    st = np.clip((out - lo) / (hi - lo + 1e-6), 0, 1) ** 0.9 * 190 + 8
+    return out * (1 - sea[..., None]) + st * sea[..., None]
+
+
 def truecolour():
     """NASA GIBS VIIRS corrected-reflectance tiles (plate carree, so they line up with the map) for the last 3 days
     from all three VIIRS satellites. Each pixel is scored for cloud/glare; the newest day wins wherever it is clear,
@@ -1060,7 +1073,8 @@ def truecolour():
         alpha = alpha + wgt * (1 - alpha); src = np.where(wgt > 0.5, k, src)
         s["share"] = float((wgt > 0.5).mean())
     base["share"] = float((src == 0).mean())
-    Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(os.path.join(OUT, "truecolour.jpg"), quality=86, optimize=True)
+    Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(os.path.join(OUT, "truecolour_natural.jpg"), quality=86, optimize=True)
+    Image.fromarray(np.clip(_tc_enhance(out), 0, 255).astype(np.uint8)).save(os.path.join(OUT, "truecolour.jpg"), quality=86, optimize=True)
     used = [{"day": str(s["day"]), "sat": s["sat"], "share": round(s.get("share", 0.0), 3), "clear": round(s["clear"], 3)} for s in shots]
     used = [u for u in used if u["share"] > 0.005]
     newest = max(u["day"] for u in used)
