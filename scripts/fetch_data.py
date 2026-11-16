@@ -982,6 +982,7 @@ def dumping():
 L2P_SATS = ("N20", "N21")                     # S-NPP stopped producing L2P in 2026
 SHARP_RES = 0.0075                            # ~750 m, the VIIRS native pixel
 SHARP_HOURS = 36                              # passes older than this aren't used
+L2P_CACHE = os.environ.get("L2P_CACHE", os.path.join(os.path.dirname(__file__), "..", ".cache", "l2p"))
 
 
 def _nanbox(a, r):
@@ -1000,6 +1001,10 @@ def sharp():
     from PIL import Image
     with open(os.path.expanduser("~/.dodsrc"), "w") as f:            # no OPeNDAP call may hang the job
         f.write("HTTP.TIMEOUT=60\nHTTP.CONNECTTIMEOUT=15\n")
+    os.makedirs(L2P_CACHE, exist_ok=True)
+    for fn in os.listdir(L2P_CACHE):                                  # drop cached passes older than 3 days
+        if time.time() - os.path.getmtime(os.path.join(L2P_CACHE, fn)) > 3 * 86400:
+            os.remove(os.path.join(L2P_CACHE, fn))
     idx_path = os.path.join(OUT, "l2p_index.json")
     try:
         idx = json.load(open(idx_path))
@@ -1029,6 +1034,10 @@ def sharp():
                 info = idx.get(key, "new")
                 if info is None:
                     continue                                              # scanned before, misses the Bay
+                cf = os.path.join(L2P_CACHE, key.replace("/", "_") + ".npy")
+                if info != "new" and os.path.exists(cf):                  # gridded on an earlier run (GitHub Actions cache)
+                    G = np.load(cf)
+                    passes.append({"sat": sat, "t": t, "grid": G, "night": t.hour in (11, 12, 13, 14, 15)}); continue
                 if time.time() - t_start > 9 * 60:
                     log("sharp: time budget used"); break
                 try:
@@ -1040,7 +1049,7 @@ def sharp():
                         if not m.any():
                             idx[key] = None; nc.close(); continue
                         jj, ii = np.where(m); R, C = nc.variables["lat"].shape
-                        info = [max(0, (jj.min() - 1) * st), min(R, (jj.max() + 2) * st), max(0, (ii.min() - 1) * st), min(C, (ii.max() + 2) * st)]
+                        info = [int(max(0, (jj.min() - 1) * st)), int(min(R, (jj.max() + 2) * st)), int(max(0, (ii.min() - 1) * st)), int(min(C, (ii.max() + 2) * st))]
                         idx[key] = info
                     r0, r1, c0, c1 = info
                     la = np.ma.filled(nc.variables["lat"][r0:r1, c0:c1], np.nan); lo = np.ma.filled(nc.variables["lon"][r0:r1, c0:c1], np.nan)
@@ -1051,6 +1060,8 @@ def sharp():
                 except Exception as e:
                     log("sharp:", key, "failed", str(e)[:80]); continue
                 good = (ql >= 4) & np.isfinite(sst)
+                if good.sum() < 200:
+                    idx[key] = None; continue                             # all cloud over the Bay: never re-fetch
                 good &= _box(good.astype(np.float64), 1) > 0.99           # drop pixels touching cloud: edges are often contaminated
                 if good.sum() < 200:
                     continue
@@ -1064,6 +1075,7 @@ def sharp():
                 with np.errstate(invalid="ignore"):
                     G = np.where(N > 0, S / N, np.nan)
                 passes.append({"sat": sat, "t": t, "grid": G, "night": t.hour in (11, 12, 13, 14, 15)})
+                np.save(cf, G.astype(np.float32))
                 log(f"sharp: {sat} {t:%d %H:%M}Z {np.isfinite(G).mean():.0%} of the Bay clear")
     # forget scans older than 4 days
     cutoff = (now - dt.timedelta(days=4)).strftime("%Y%m%d%H%M%S")
