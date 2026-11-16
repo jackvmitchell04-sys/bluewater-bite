@@ -887,6 +887,8 @@ function draw(){
     for(const w of A.wind.pts){const x=X(w.lon),y=Y(w.lat);if(!inView(x,y))continue;const[u,v]=fc&&w.wd&&w.wd[MAP.fcDay]?w.wd[MAP.fcDay]:[w.wu,w.wv],kn=Math.hypot(u,v)*1.944,dir=(Math.atan2(u,v)/RAD+360)%360;
       arrow(g,x,y,dir,6+kn*.8,"#ffe14d",1.6);if(VIEW.z>=1.8){g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.7)";g.strokeText(Math.round(kn),x+4,y+12);g.fillStyle="#ffe14d";g.fillText(Math.round(kn),x+4,y+12);}}}
   g.font="11px sans-serif";for(const[nm,la,lo]of PORTS){const x=X(lo),y=Y(la);if(!inView(x,y))continue;g.fillStyle=chartMode?"#222":"#fff";g.beginPath();g.arc(x,y,2.5,0,7);g.fill();g.fillStyle=chartMode?"#1a1a1a":"rgba(255,255,255,.9)";g.fillText(nm,x+4,la<-37.85?y-5:y+12);}
+  drawDumps(g,X,Y,V,chartMode);
+  drawIslands(g,X,Y,W,H,chartMode);drawPlaces(g,X,Y,W,H,chartMode);
   drawMarks(g,X,Y,W,H);
   drawCatches(g,X,Y,inView);
   drawPlan(g,X,Y);
@@ -1254,15 +1256,40 @@ const CHARTED=[
 const APPROX=[
  ["The Hook",-36.553,176.090,"Kink in the 200 m line NE of Red Mercury (fishing.net.nz forum description)"],
  ["Middle Ground",-36.900,176.230,"Where the 200-500 m lines bunch NE of the Aldermen (forum description)"],
- ["Footprint",-36.200,176.330,"North of the Hook, outside Cuvier; deep bluenose ground (forum, NZ Herald)"],
- ["Whanga Trench (area)",-37.150,176.300,"Between the Aldermen and Mayor (Furuno NZ); exact trench line not published"],
- ["Outer Penguin Rise",-37.405,176.440,"Series of hills SE of the Mayor Knolls (Angler's Planet report)"],
- ["Alderman Knolls (skipper GPS)",-(36+57.246/60),176+51.157/60,"GPS mark posted by a skipper on fishing.net.nz; knoll top ~660 m"],
+ ["Footprint",-36.1942,176.3146,"North of the Hook, outside Cuvier (forum, NZ Herald); placed on the knoll top (396 m, rises ~150 m) in the survey data"],
+ ["Whanga Trench",-37.105,176.345,"Canyon NE of Mayor between the Aldermen and Mayor (Furuno NZ, TSFC catch log); survey shows it running ENE from 37°07.5'S 176°17'E (450 m) to 37°04.5'S 176°28'E (850 m)"],
+ ["Outer Penguin Rise",-37.4074,176.4435,"Hills SE of the Mayor Knolls (Angler's Planet report); placed on the knoll top (133 m, stands ~140 m proud) in the NIWA survey"],
+ ["Alderman Knolls (skipper GPS)",-(36+57.246/60),176+51.157/60,"GPS mark posted by a skipper on fishing.net.nz; NIWA survey puts the knoll top (803 m) 0.8 nm WNW"],
+ ["Lazens Reef (Lassiter Reef?)",-37.5158,177.167,"Dive site 'between White Island and Volkner Rocks' (Zentacle); TSFC log's 'Lassiter Reef' is likely this. Placed on the shallowest reef on that line in the 40 m survey (10 m), 0.8 nm W of White Island"],
  ["Mercury Knolls (skipper GPS)",-(36+31.31/60),176+31.2/60,"GPS mark posted by a skipper on fishing.net.nz"]];
 let USERMARKS=[];try{USERMARKS=JSON.parse(localStorage.getItem("bwb-marks")||"[]");}catch(e){}
+/* island names: [name, Māori name, lat, lon, radius km to centre the label on the land, min zoom] */
+const ISLANDS=[["Mayor Island","Tūhua",-37.285,176.254,3,1],["White Island","Whakaari",-37.521,177.183,2,1],["Whale Island","Moutohorā",-37.858,176.973,1.5,1.4],
+ ["Motiti Island","Mōtītī",-37.635,176.42,3,1],["Plate Island","Motunau",-37.662,176.558,.7,3],["Rurima Rocks","",-37.835,176.89,1,2.6],["Slipper Island","Whakahau",-37.05,175.94,1.3,1.8],
+ ["Shoe Island","Motuhoa",-37.003,175.92,.7,2.8],["Alderman Islands","Te Ruamāhua",-36.965,176.08,3,1.3],["Great Mercury Island","Ahuahu",-36.62,175.8,3,1.3],["Red Mercury Island","Whakau",-36.63,175.93,1.3,2.2],
+ ["Cuvier Island","Repanga",-36.435,175.77,1.3,1.6],["Great Barrier Island","Aotea",-36.2,175.42,10,1],["Matakana Island","",-37.58,176.08,6,1.4],["Karewa Island","",-37.548,176.117,.6,3.2],
+ ["Mauao","Mt Maunganui",-37.632,176.172,.6,2.8],["Schooner Rocks","Motuhaku",-37.604,176.53,.5,4]];
+const PLACES=[["Waihau Bay",-37.617,177.925],["Lottin Point",-37.552,178.163],["Cape Runaway",-37.533,177.983],["Whanarua Bay",-37.68,177.79],["Pukehina",-37.81,176.54],["Maketū",-37.755,176.455],["Waihī Beach",-37.40,175.94],["Hot Water Beach",-36.89,175.82],["Pāuanui",-37.02,175.87]];
+function drawPlaces(g,X,Y,W,H,chartMode){if(VIEW.z<1.6)return;g.font="10.5px sans-serif";for(const[n,la,lo]of PLACES){const x=X(lo),y=Y(la);if(x<0||y<0||x>W||y>H)continue;
+  g.fillStyle=chartMode?"#333":"#fff";g.beginPath();g.arc(x,y,2,0,7);g.fill();g.lineWidth=3;g.strokeStyle=chartMode?"rgba(255,255,255,.85)":"rgba(0,0,0,.7)";g.strokeText(n,x+4,y-3);g.fillStyle=chartMode?"#222":"#f2f2f2";g.fillText(n,x+4,y-3);}}
+function islandLabels(){if(MAP.islands)return MAP.islands;const B=MAP.BF;MAP.islands=ISLANDS.map(([n,mi,la,lo,r,mz])=>{let sx=0,sy=0,c=0;
+  if(B){const ri=Math.ceil(r/(B.res*KM*Math.cos(la*RAD))),rj=Math.ceil(r/(B.res*KM)),i0=Math.round((lo-B.lon0)/B.res),j0=Math.round((B.lat1-la)/B.res);
+    for(let j=j0-rj;j<=j0+rj;j++)for(let i=i0-ri;i<=i0+ri;i++){if(i<0||j<0||i>=B.nx||j>=B.ny)continue;if(B.elev[j*B.nx+i]>0){sx+=B.lon0+i*B.res;sy+=B.lat1-j*B.res;c++;}}}
+  return{n,mi,la:c>2?sy/c:la,lo:c>2?sx/c:lo,mz};});return MAP.islands;}
+function drawIslands(g,X,Y,W,H,chartMode){const z=VIEW.z;for(const s of islandLabels()){if(z<s.mz)continue;const x=X(s.lo),y=Y(s.la);if(x<-60||y<-20||x>W+60||y>H+20)continue;
+  const f=Math.round(Math.min(15,10+z*.6));g.textAlign="center";g.font=`italic 600 ${f}px sans-serif`;g.lineWidth=3.5;g.strokeStyle=chartMode?"rgba(255,255,255,.9)":"rgba(0,0,0,.75)";g.fillStyle=chartMode?"#3b2a12":"#fff1d6";
+  g.strokeText(s.n,x,y);g.fillText(s.n,x,y);if(s.mi&&z>=1.6){g.font=`italic ${f-2}px sans-serif`;g.strokeText(s.mi,x,y+f);g.fillText(s.mi,x,y+f);}g.textAlign="left";}}
 const saveMarks=()=>{try{localStorage.setItem("bwb-marks",JSON.stringify(USERMARKS));}catch(e){}};
 MAP.showMarks=true;
-function allMarks(){return CHARTED.map(([n,la,lo,src])=>({n,la,lo,src,ch:1})).concat(APPROX.map(([n,la,lo,src])=>({n,la,lo,src,ch:1,ap:1})),USERMARKS.map((m,i)=>({...m,i})));}
+const AMMO=[-(36+28/60),176+20/60];let DUMPS=[],DUMPMARKS=[["Ammo Dump",AMMO[0],AMMO[1],"Centre of the charted ammunition dumping ground, 36°28'S 176°20'E, 5 nm radius, over 600 m deep (LINZ Annual Notice to Mariners No. 14). Skippers call it the Ammo Dump; regular in the Tauranga Sport Fishing Club catch logs. Don't bottom fish or anchor inside it."]].map(([n,la,lo,src])=>({n,la,lo,src,ch:1}));
+fetch("data/dumping.json",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(o=>{if(!o)return;const seen=new Set();DUMPS=o.items.filter(it=>{const k=it.cat+it.name+it.rings[0].length;if(seen.has(k))return false;seen.add(k);return true;}).map(it=>{const xs=it.rings.flat().map(p=>p[0]),ys=it.rings.flat().map(p=>p[1]);const bb=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)],ammo=Math.abs((bb[1]+bb[3])/2-AMMO[0])<.05&&Math.abs((bb[0]+bb[2])/2-AMMO[1])<.05;
+    return{...it,cat:ammo?"Ammunition dumping ground":it.cat,bb};});
+  MAP.planIndex=null;renderMarkList();if(MAP.ready)redraw();}).catch(()=>{});
+function allMarks(){return CHARTED.map(([n,la,lo,src])=>({n,la,lo,src,ch:1})).concat(DUMPMARKS,APPROX.map(([n,la,lo,src])=>({n,la,lo,src,ch:1,ap:1})),USERMARKS.map((m,i)=>({...m,i})));}
+function drawDumps(g,X,Y,V,chartMode){for(const d of DUMPS){if(d.bb[2]<V.lon0||d.bb[0]>V.lon1||d.bb[3]<V.lat0||d.bb[1]>V.lat1)continue;g.beginPath();for(const r of d.rings){r.forEach(([lo,la],k)=>k?g.lineTo(X(lo),Y(la)):g.moveTo(X(lo),Y(la)));g.closePath();}
+  g.fillStyle=/explosive|ammunition/i.test(d.cat)?"rgba(120,120,120,.28)":"rgba(140,110,70,.18)";g.fill("evenodd");g.setLineDash([2,3]);g.strokeStyle=chartMode?"#5a2d82":"#d9b8ff";g.lineWidth=1.4;g.stroke();g.setLineDash([]);
+  if(VIEW.z>=1.5&&Math.abs(X(d.bb[2])-X(d.bb[0]))>40){const x=X((d.bb[0]+d.bb[2])/2),y=Y((d.bb[1]+d.bb[3])/2)+14;g.font="italic 10px sans-serif";g.textAlign="center";g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.7)";g.fillStyle="#e7d4ff";
+    const t=(d.cat+" "+(d.name||"")).trim();g.strokeText(t,x,y);g.fillText(t,x,y);g.textAlign="left";}}}
 function parsePos(t){t=t.trim().toUpperCase().replace(/[°'′"]/g," ");
   const dec=t.match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/);if(dec){let la=+dec[1],lo=+dec[2];if(la>0&&la<90&&lo>170)la=-la;return[la,lo];}
   const m=t.match(/(\d+)\s+(\d+(?:\.\d+)?)\s*([NS])\D*?(\d+)\s+(\d+(?:\.\d+)?)\s*([EW])/);if(m){const la=(+m[1]+ +m[2]/60)*(m[3]==="S"?-1:1),lo=(+m[4]+ +m[5]/60)*(m[6]==="W"?-1:1);return[la,lo];}
@@ -1342,7 +1369,8 @@ renderCatches();
 const AREAS=[["Mayor Island",-37.285,176.254,["mayor","tuhua","tūhua"]],["Motiti Island",-37.635,176.42,["motiti"]],["White Island",-37.52,177.183,["white island","whakaari","white"]],
  ["Alderman Islands",-36.965,176.08,["alderman","aldermen","aldermans","aldies"]],["Mercury Islands",-36.62,175.86,["mercury","mercs","mercuries"]],["Slipper Island",-37.05,175.94,["slipper"]],
  ["Plate Island",-37.655,176.555,["plate","motunau"]],["Rurima Rocks",-37.83,176.88,["rurima"]],["Cuvier Island",-36.43,175.77,["cuvier"]],["Great Barrier Island",-36.2,175.45,["barrier","gbi"]],
- ["Cape Runaway",-37.53,177.98,["runaway"]],["Shoe Island",-37.0,175.92,["shoe"]],["Mercury Bay",-36.8,175.8,["mercury bay"]]];
+ ["Cape Runaway",-37.53,177.98,["runaway"]],["Waihau Bay",-37.60,177.93,["waihau","waihou"]],["Lottin Point",-37.54,178.17,["lottin"]],["Whale Island",-37.858,176.973,["whale","moutohora","moutohorā"]],
+ ["Ammo Dump",0,0,["ammo","ammo dump","ammunition"]],["Shoe Island",-37.0,175.92,["shoe"]],["Mercury Bay",-36.8,175.8,["mercury bay"]]];
 const PORT_ALIAS={"Tauranga":["tauranga","the mount","mount","mt maunganui","maunganui","mt"],"Whakatane":["whakatane","whakatāne","whaka"],"Whitianga":["whitianga","whitty"],"Tairua":["tairua","pauanui"],
  "Whangamata":["whangamata","whangamatā"],"Opotiki":["opotiki","ōpōtiki"],"Te Kaha":["te kaha"],"Port Fitzroy":["fitzroy","port fitzroy"]};
 const PORT_EXIT={"Tauranga":"the Mount entrance","Whakatane":"the Whakatāne bar","Whitianga":"the Whitianga harbour mouth","Tairua":"the Tairua bar","Whangamata":"the Whangamatā bar","Opotiki":"the Ōpōtiki bar","Te Kaha":"Te Kaha","Port Fitzroy":"Port Fitzroy"};
@@ -1351,7 +1379,7 @@ const comp16=b=>["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW",
 const p3=x=>String(Math.round((x+360)%360)).padStart(3,"0");
 let SKIPPER="Jack",HOMEPORT="Tauranga";try{SKIPPER=localStorage.getItem("bwb-skipper")||"Jack";HOMEPORT=localStorage.getItem("bwb-home")||"Tauranga";}catch(e){}
 function placeIndex(){const L=[];
-  for(const[n,la,lo,al]of AREAS)L.push({n,la,lo,keys:al,kind:"area"});
+  for(const[n,la,lo,al]of AREAS){if(n==="Ammo Dump"){const d=allMarks().find(m=>/^Ammo Dump/.test(m.n));if(d)L.push({n:d.n,la:d.la,lo:d.lo,keys:al,kind:"mark"});continue;}L.push({n,la,lo,keys:al,kind:"area"});}
   for(const m of allMarks()){const words=m.n.toLowerCase().replace(/[()/≈]/g," ").split(/\s+/).filter(w=>w.length>=4&&!GENERIC.has(w));
     const extra=[...(m.n.match(/\(([^)]+)\)/)||[,""])[1].toLowerCase().split(/,| or /)].map(x=>x.trim().replace(/^the /,"")).filter(Boolean);
     L.push({n:m.n,la:m.la,lo:m.lo,keys:[m.n.toLowerCase(),...words,...extra],kind:"mark",ap:m.ap});}
