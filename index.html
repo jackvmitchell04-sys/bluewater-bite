@@ -1174,9 +1174,9 @@ function solunarAt(t){const off=nzOffsetMs(t),day0=Math.floor((t+off)/864e5)*864
   const ev=solunar(day0,BOP.lat,BOP.lon).filter(e=>e.type!=="Sun");const hit=ev.find(e=>Math.abs(t-e.t)<=e.dur*30e3);return hit?hit.type:"Outside";}
 $("csave").onclick=()=>{const p=pendingCatch;if(!p)return;const t=Date.parse(p.t),c=MAP.ready?conditionsAt(p.la,p.lo):{},ph=moonPhase(t),age=ph*29.53;
   let tide=null;if(TIDES){const port=TIDES.ports.map(q=>({q,d:hav(q.lat,q.lon,p.la,p.lo)})).sort((a,b)=>a.d-b.d)[0].q,st=tideState(port,t);if(st)tide={port:port.name,rising:st.rising,txt:st.txt};}
-  const sp=$("csp").value;
+  const sp=$("csp").value,lf=MAP.ready?catchFeats(p.la,p.lo):{};
   CATCHES.unshift({t:p.t,la:p.la,lo:p.lo,how:p.how,sp,spn:sp.startsWith("x:")?sp.slice(2):SPECIES[sp].name,mur:c.sst??null,kg:parseFloat($("ckg").value)||null,rel:$("crel").checked,note:$("cnote").value.trim(),
-    sst:c.hima??c.sst??null,anom:c.anom??null,dep:c.dep??null,front:c.front??null,chl:c.chl??null,moon:phaseName(ph),age:+age.toFixed(1),sol:solunarAt(t),tide});
+    f:lf.f||null,r:lf.r||null,sst:c.hima??c.sst??null,anom:c.anom??null,dep:c.dep??null,front:c.front??null,chl:c.chl??null,moon:phaseName(ph),age:+age.toFixed(1),sol:solunarAt(t),tide});
   saveCatches();$("cform").style.display="none";pendingCatch=null;$("chint").textContent="Saved. Tight lines.";renderCatches();learnPanel();mapUpdate();};
 const med=a=>{const b=a.filter(x=>x!=null).sort((x,y)=>x-y);return b.length?b[Math.floor(b.length/2)]:null;};
 function renderCatches(){const C=CATCHES;
@@ -1202,23 +1202,58 @@ $("catchcsv").onclick=()=>{const h=["time_utc","lat","lon","species","kg","relea
 renderCatches();
 
 /* ---------- Learning from the catch log ----------
-   Each logged catch stores the conditions where it happened. With 3+ catches of a species (or 5+ of anything),
-   the map learns the water temp, front distance, depth, chlorophyll and anomaly you actually catch fish in,
-   and leans the hotspot score toward places that match. The pull grows with every catch, capped at 50%. */
-const LEARN_F=[["sst",c=>c.mur??c.sst,.6,"°C"],["front",c=>c.front,2,"km"],["dep",c=>c.dep>0?Math.log10(c.dep):null,.2,"m"],["chl",c=>c.chl>0?Math.log10(c.chl):null,.15,""],["anom",c=>c.anom,.4,"°C"]];
+   Ocean conditions only (no depth). For every catch the app saves the conditions at the hook-up spot AND where that
+   spot ranked against all the water within 30 km that day (e.g. "warmest 15%", "closest 10% to a chlorophyll edge").
+   Inputs where your catches rank consistently away from average are the ones that matter for you; the map then
+   weights those inputs most when it scores hotspots. */
+const FEATS=[
+ {k:"sst",   nm:"water temperature",            hi:"warmer water",                lo:"cooler water",                 sd:.5,  fmt:v=>v.toFixed(1)+"°C"},
+ {k:"anom",  nm:"temperature vs normal",        hi:"water warmer than normal",    lo:"water cooler than normal",     sd:.4,  fmt:v=>(v>=0?"+":"")+v.toFixed(1)+"°C"},
+ {k:"chg",   nm:"5-day temperature change",     hi:"water that has been warming", lo:"water that has been cooling",  sd:.3,  fmt:v=>(v>=0?"+":"")+v.toFixed(1)+"°C"},
+ {k:"grad",  nm:"temperature break strength",   hi:"strong temperature breaks",   lo:"flat, even water",             sd:.03, fmt:v=>(v*2).toFixed(2)+"°C/2 km"},
+ {k:"front", nm:"distance to SST front",        hi:"water away from fronts",      lo:"close to SST fronts",          sd:2,   fmt:v=>v.toFixed(1)+" km"},
+ {k:"chl",   nm:"chlorophyll",                  hi:"greener, plankton-rich water",lo:"clean blue water",             sd:.12, fmt:v=>(10**v).toFixed(2)+" mg/m³"},
+ {k:"chle",  nm:"distance to chlorophyll edge", hi:"away from colour changes",    lo:"close to colour changes (chlorophyll edges)",sd:2,fmt:v=>v.toFixed(1)+" km"},
+ {k:"kd",    nm:"water clarity",                hi:"murkier water",               lo:"clearer water",                sd:.015,fmt:v=>v.toFixed(3)},
+ {k:"cur",   nm:"current speed",                hi:"stronger current",            lo:"slack current",                sd:.15, fmt:v=>v.toFixed(2)+" kn"},
+ {k:"conv",  nm:"convergence / upwelling",      hi:"converging currents (bait lines)",lo:"upwelling water",          sd:.25, fmt:v=>v.toFixed(2)},
+ {k:"eddy",  nm:"sea level (eddies)",           hi:"warm-core eddies / high sea level",lo:"cold-core eddies / low sea level",sd:.02,fmt:v=>(v*100).toFixed(0)+" cm"}];
+function featAt(A,n){const L=A.sst.length-1,q=x=>x==null||isNaN(x)?null:x,cl=A.chl?A.chl[Math.min(L,A.chl.length-1)][n]:NaN;
+  return{sst:q(A.sst[L][n]),anom:A.anom?q(A.anom[n]):null,chg:q(A.change[n]),grad:q(A.fr[L].g[n]),front:q(A.frontDist[n]),chl:cl>0?Math.log10(cl):null,
+    chle:A.chlDist?q(A.chlDist[n]):null,kd:A.D_kd?q(A.D_kd[n]):null,cur:A.speed?q(A.speed[n]):null,conv:A.convN?q(A.convN[n]):null,eddy:A.slaL?q(A.slaL[n]):null};}
+/* where this spot ranks (0..1) against all sea within 30 km */
+function featRank(A,i0,j0,f){const R=Math.round(30/(AREA.res*KM)),cnt={},below={};
+  for(let j=Math.max(0,j0-R);j<=Math.min(NY-1,j0+R);j++)for(let i=Math.max(0,i0-R);i<=Math.min(NX-1,i0+R);i++){if((i-i0)**2+(j-j0)**2>R*R)continue;const n=ix(i,j);if(A.land[n])continue;
+    const g=featAt(A,n);for(const F of FEATS){const v=g[F.k],me=f[F.k];if(v==null||me==null)continue;cnt[F.k]=(cnt[F.k]||0)+1;if(v<me)below[F.k]=(below[F.k]||0)+1;else if(v===me)below[F.k]=(below[F.k]||0)+.5;}}
+  const r={};for(const k in cnt)if(cnt[k]>20)r[k]=below[k]/cnt[k];return r;}
+function catchFeats(la,lo){const A=MAP.A;if(!A)return{};const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res);if(i<0||j<0||i>=NX||j>=NY)return{};
+  const f=featAt(A,ix(i,j));return{f,r:featRank(A,i,j,f)};}
+/* older catches saved before this version: use what they have */
+const cf=c=>c.f||{sst:c.mur??c.sst,front:c.front,chl:c.chl>0?Math.log10(c.chl):null,anom:c.anom};
 let LEARN_ON=true;try{LEARN_ON=localStorage.getItem("bwb-learn")!=="0";}catch(e){}
 function learnModel(spKey){const own=CATCHES.filter(c=>c.sp===spKey),pool=own.length>=3?own:CATCHES.length>=5?CATCHES:null;if(!pool)return null;
-  const st={};for(const[k,get,floor]of LEARN_F){const v=pool.map(get).filter(x=>x!=null&&isFinite(x));if(v.length<3)continue;const mu=v.reduce((a,b)=>a+b,0)/v.length;
-    st[k]={mu,sd:Math.max(floor,Math.sqrt(v.reduce((a,b)=>a+(b-mu)**2,0)/v.length)),lo:Math.min(...v),hi:Math.max(...v)};}
-  if(!Object.keys(st).length)return null;return{n:pool.length,own:pool===own,st,w:Math.min(.5,pool.length/(pool.length+12))};}
-function learnedFactor(M,A,n){const L=A.sst.length-1,x={sst:A.sst[L][n],front:A.frontDist[n],dep:A.depth[n]>0?Math.log10(A.depth[n]):NaN,chl:A.chl?Math.log10(A.chl[Math.min(L,A.chl.length-1)][n]):NaN,anom:A.anom?A.anom[n]:NaN};
-  let z=0,c=0;for(const k in M.st){const v=x[k];if(v==null||isNaN(v))continue;z+=((v-M.st[k].mu)/M.st[k].sd)**2;c++;}return c?1-M.w+M.w*Math.exp(-.5*z/c)*1.4:1;}
+  const st={};for(const F of FEATS){const v=pool.map(c=>cf(c)[F.k]).filter(x=>x!=null&&isFinite(x));if(v.length<3)continue;
+    const mu=v.reduce((a,b)=>a+b,0)/v.length,sd=Math.max(F.sd,Math.sqrt(v.reduce((a,b)=>a+(b-mu)**2,0)/v.length));
+    const rk=pool.map(c=>c.r&&c.r[F.k]).filter(x=>x!=null);let imp=.15,dir=0,rmean=null;
+    if(rk.length>=3){rmean=rk.reduce((a,b)=>a+b,0)/rk.length;const rsd=Math.sqrt(rk.reduce((a,b)=>a+(b-rmean)**2,0)/rk.length);
+      // how far from "average water" your catches sit, and how consistently: random spots would average 0.5 with sd ~0.29
+      const shift=Math.abs(rmean-.5)*2,cons=Math.max(0,1-rsd/.29),sig=Math.min(1,Math.sqrt(rk.length/8));imp=Math.max(.05,shift*(.4+.6*cons)*sig);dir=rmean>.5?1:-1;}
+    st[F.k]={mu,sd,imp,dir,rmean,n:v.length};}
+  if(!Object.keys(st).length)return null;return{n:pool.length,own:pool===own,st,w:Math.min(.6,pool.length/(pool.length+10))};}
+function learnedFactor(M,A,n){const f=featAt(A,n);let z=0,wt=0;
+  for(const k in M.st){const v=f[k];if(v==null)continue;const s=M.st[k];z+=s.imp*((v-s.mu)/s.sd)**2;wt+=s.imp;}
+  return wt?1-M.w+M.w*Math.exp(-.5*z/wt)*1.5:1;}
 function learnPanel(){const el=$("learnbox");const M=learnModel(state.sp);
   const tog=`<label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="learntog" ${LEARN_ON?"checked":""}> Use my catches to improve the hotspot map</label>`;
-  if(!M){const own=CATCHES.filter(c=>c.sp===state.sp).length;el.innerHTML=`${tog}<div class="mkhint">Learning starts after 3 ${SPECIES[state.sp].name} catches (or 5 of any species). You have ${own}.</div>`;}
-  else{const s=M.st,r=(k,f,u)=>s[k]?`${f(s[k].lo)} to ${f(s[k].hi)}${u}`:null,p=x=>Math.round(10**x);
-    const bits=[r("sst",v=>v.toFixed(1),"°C water"),s.front?`about ${s.front.mu.toFixed(1)} km from a front`:null,r("dep",p," m deep"),s.anom?`${s.anom.mu>=0?"+":""}${s.anom.mu.toFixed(1)}°C vs normal`:null].filter(Boolean);
-    el.innerHTML=`${tog}<div class="why" style="margin-top:6px">Learning from <b>${M.n}</b> ${M.own?SPECIES[state.sp].name:"logged"} catches: ${bits.join(", ")}. Hotspots lean <b>${Math.round(M.w*100)}%</b> toward water like this${LEARN_ON?"":" (switched off)"}. More catches make it sharper; it's a personal pattern, so a few lucky days can skew it.</div>`;}
+  if(!M){const own=CATCHES.filter(c=>c.sp===state.sp).length;el.innerHTML=`${tog}<div class="mkhint">Learning starts after 3 ${SPECIES[state.sp].name} catches (or 5 of any species); you have ${own}. For each catch it records the temperature, breaks, chlorophyll, clarity, currents, convergence and eddies at the spot, and how that spot compared with all the water within 30 km that day. Over time it works out which of those inputs your fish actually follow.</div>`;}
+  else{const ranked=FEATS.filter(F=>M.st[F.k]&&M.st[F.k].rmean!=null).sort((a,b)=>M.st[b.k].imp-M.st[a.k].imp);
+    const tot=ranked.reduce((s,F)=>s+M.st[F.k].imp,0)||1;
+    const rows=ranked.slice(0,6).map(F=>{const s=M.st[F.k],pc=Math.round((s.dir>0?s.rmean:1-s.rmean)*100);
+      return`<div class="bar"><span style="width:150px">${F.nm}</span><div class="track"><div class="fill" style="width:${Math.round(s.imp/tot*100*1.6)}%;background:var(--accent)"></div></div><em style="width:auto;min-width:34px">${Math.round(s.imp/tot*100)}%</em></div>
+        <div class="srcm" style="font-size:12px;margin:-4px 0 6px">${s.dir>0?F.hi:F.lo}: your spots were ${/front|chle/.test(F.k)?(s.dir>0?"farther":"closer"):(s.dir>0?"higher":"lower")} than ${pc}% of the water within 30 km · typical ${F.fmt(s.mu)}</div>`;}).join("");
+    el.innerHTML=`${tog}<div class="why" style="margin-top:6px">Learning from <b>${M.n}</b> ${M.own?SPECIES[state.sp].name:"logged"} catches. Hotspots lean <b>${Math.round(M.w*100)}%</b> toward the conditions below${LEARN_ON?"":" (switched off)"}, weighted by how strongly each one shows up in your catches.</div>
+      ${rows||'<div class="mkhint">Not enough detail yet: catches logged from now on record how each spot compared with the water around it.</div>'}
+      <div class="mkhint">A pattern needs several catches over different days to be trusted; one hot day of fishing can look like a rule.</div>`;}
   $("learntog").onchange=e=>{LEARN_ON=e.target.checked;try{localStorage.setItem("bwb-learn",LEARN_ON?"1":"0");}catch(x){}mapUpdate();learnPanel();};}
 learnPanel();
 
