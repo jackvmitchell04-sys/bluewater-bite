@@ -12,15 +12,16 @@ permissions:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install xarray netCDF4 siphon numpy requests pillow tifffile imagecodecs
-      - run: python scripts/fetch_data.py
+      - run: timeout 45m python scripts/fetch_data.py || echo "fetch ended early, saving what finished"
       - name: Save new data
+        if: always()
         run: |
           git config user.name "bluewater-bot"
           git config user.email "actions@users.noreply.github.com"

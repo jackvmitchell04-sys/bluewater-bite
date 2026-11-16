@@ -105,9 +105,10 @@ def himawari():
     if not sets:
         raise RuntimeError("no Himawari files found from any source")
     frames, stack = [], []
+    t_start = time.time()
     for d in sorted(sets, key=lambda d: d.name):
         try:
-            if time.time() - T0 > 900:
+            if time.time() - t_start > 600:
                 log("time budget used, stopping at", len(stack), "files"); break
             log("reading", d.name, "services:", ",".join(d.access_urls))
             ds = open_remote(d)
@@ -151,12 +152,12 @@ def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
         for latc in (f"[({la0:.3f}):{stride}:({la1:.3f})]", f"[({la1:.3f}):{stride}:({la0:.3f})]"):
             q = var + time + ("[(0.0)]" if alt else "") + latc + f"[({lo0:.3f}):{stride}:({lo1:.3f})]"
             try:
-                r = requests.get(erd + ds + ".csv?" + requests.utils.quote(q, safe=""), timeout=300)
+                r = requests.get(erd + ds + ".csv?" + requests.utils.quote(q, safe=""), timeout=150)
                 r.raise_for_status(); break
             except Exception as e:
                 last = e; r = None
                 log("  ", erd.split("/")[2], str(e)[:60])
-                if "403" in str(e) or "503" in str(e) or "timed out" in str(e):
+                if any(x in str(e) for x in ("403", "500", "503", "timed out")):
                     break          # server refusing us: try the next mirror
         if r is None and erd == ERDS[-2]:
             __import__("time").sleep(60)
@@ -249,7 +250,7 @@ def ocean():
         OCEAN["sla"] = r; out["sla"] = pack(*r, digits=3); log("ocean: sla", r[2][-1])
     except Exception as e:
         log("ocean: sla failed:", str(e)[:120])
-    for var in ("kd_490", "kd490"):
+    for var in ("kd_490",):
         kd, label = best_recent([("noaacwNPPN20S3AkdSCIDINEOF2kmDaily", "VIIRS + Sentinel-3 OLCI Kd490, 2 km"),
                                  ("nesdisNPPN20S3AkdSCIDINEOFDaily", "VIIRS + Sentinel-3 OLCI Kd490, 9 km")], var, latest, time="[last]", digits=4, max_age=7)
         if kd:
@@ -430,7 +431,10 @@ def currents():
                             "forecast_days": 6, "wind_speed_unit": "ms", "timezone": "Pacific/Auckland"})
     now = dt.datetime.utcnow() + dt.timedelta(hours=13)
     geo = None
-    if "sla" in OCEAN:
+    sla_fresh = "sla" in OCEAN and "sst" in OCEAN and (dt.date.fromisoformat(OCEAN["sst"][2][-1]) - dt.date.fromisoformat(OCEAN["sla"][2][-1])).days <= 10
+    if not sla_fresh:
+        log("currents: altimetry stale or missing, Ekman drift only (detailed currents come from model_grid)")
+    if sla_fresh:
         lats, lons, times, sla = OCEAN["sla"]
         eta = sla[-1]; la = np.array(lats); lo = np.array(lons)
         deta_dy = np.gradient(eta, la * 111320.0, axis=0)
@@ -458,7 +462,7 @@ def currents():
         ugv = vgv = None
         if geo:
             ugv, vgv = geo[2](plat, plon, geo[0]), geo[2](plat, plon, geo[1])
-            if ugv is not None and np.hypot(ugv, vgv) > 1.5:
+            if ugv is None or vgv is None or np.hypot(ugv, vgv) > 1.5:
                 ugv = vgv = None
         u, v = ue + (ugv or 0), ve + (vgv or 0)
         # daily mean wind for the next 6 NZ days (for the forecast map)
@@ -771,7 +775,10 @@ def bathy_tiles():
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     ok = 0
-    for job in (bathy, bathy_hd, bathy_tiles, ocean, model_grid, currents, forecast, tides, reserves, alerts, himawari):
+    # most important first; slow model downloads are skipped if the morning budget runs out
+    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, reserves, currents, tides, model_grid, forecast):
+        if job in (model_grid, forecast) and time.time() - T0 > 25 * 60:
+            print(f"{job.__name__} skipped: time budget used, keeping yesterday's file", file=sys.stderr); continue
         try:
             job(); ok += 1
         except Exception as e:
