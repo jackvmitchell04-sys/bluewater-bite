@@ -440,11 +440,30 @@ def ocean():
     if kd:
         k = kd; kd = {"lats": k["lats"], "lons": k["lons"], "times": k["times"][-1:], "frames": k["frames"][-1:]}
         out["kd"], out["kd_label"], out["kd_age"] = kd, label, kage
-    for var in (() if kd else ("kd_490",)):
+    for var in (() if kd or out.get("chl") else ("kd_490",)):   # stale gap-filled products only if there is no chlorophyll to estimate from
         kd, label = best_recent([("noaacwNPPN20S3AkdSCIDINEOF2kmDaily", "VIIRS + Sentinel-3 OLCI Kd490, 2 km"),
                                  ("nesdisNPPN20S3AkdSCIDINEOFDaily", "VIIRS + Sentinel-3 OLCI Kd490, 9 km")], var, latest, time="[last]", digits=4, max_age=7)
         if kd:
             out["kd"], out["kd_label"] = kd, label; log("ocean: kd", label); break
+    # fill clarity gaps (or all of it) from the 4-satellite chlorophyll: in open ocean, clarity is set by plankton,
+    # Kd490 = 0.0166 + 0.0773 * Chl^0.6715 (Morel et al. 2007). Direct Kd490 readings always win where they exist.
+    if out.get("chl"):
+        C = np.array([[np.nan if v is None else v for v in row] for row in out["chl"]["frames"][-1]], dtype=float)
+        E = 0.0166 + 0.0773 * np.power(np.clip(C, 0.01, 60), 0.6715); E[~np.isfinite(C)] = np.nan
+        CA = np.array([[np.nan if v is None else v for v in row] for row in out["chl_age"]], dtype=float) if out.get("chl_age") else np.zeros_like(C)
+        same_grid = kd and out.get("kd_age") is not None and kd["lats"] == out["chl"]["lats"] and kd["lons"] == out["chl"]["lons"]
+        if same_grid:
+            K = np.array([[np.nan if v is None else v for v in row] for row in kd["frames"][-1]], dtype=float)
+            KA = np.array([[np.nan if v is None else v for v in row] for row in out["kd_age"]], dtype=float)
+            direct = np.isfinite(K); fill = ~direct & np.isfinite(E)
+            K[fill] = E[fill]; KA[fill] = CA[fill]
+            out["kd"] = pack(out["chl"]["lats"], out["chl"]["lons"], kd["times"], K[None], digits=4); out["kd_age"] = pack(out["chl"]["lats"], out["chl"]["lons"], kd["times"], KA[None], digits=0)["frames"][0]
+            out["kd_label"] = label + f"; {fill.mean():.0%} of the box estimated from chlorophyll where clouds hid the clarity passes"
+            log(f"ocean: clarity {direct.mean():.0%} direct, {fill.mean():.0%} estimated from chlorophyll")
+        elif not kd:
+            out["kd"] = pack(out["chl"]["lats"], out["chl"]["lons"], out["chl"]["times"][-1:], E[None], digits=4); out["kd_age"] = out.get("chl_age")
+            out["kd_label"] = "Estimated from the 4-satellite chlorophyll (open-ocean plankton relationship); no direct clarity pass got through the cloud"
+            kd = out["kd"]; log(f"ocean: clarity estimated from chlorophyll, {np.isfinite(E).mean():.0%} of the box")
     if not kd:
         for k in ("kd", "kd_label", "kd_age"):
             out.pop(k, None)
