@@ -143,6 +143,7 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
   <div class="controls"><select id="species"></select></div>
   <div class="offline" id="offline" hidden></div>
   <div class="moon" id="moonpanel"></div>
+  <div class="moon" id="baropanel"></div>
   <div class="moon" id="tidepanel"></div>
   <div id="tab-spots">
     <div class="days" id="days"></div>
@@ -1183,8 +1184,34 @@ function renderMoon(){
     ${rows||'<div class="bw">No solunar periods this day</div>'}
     <div class="bite"><span>Bite times</span><b>${bite.length?(bite.length>1?bite.slice(0,-1).join(", ")+" and "+bite[bite.length-1]:bite[0]):"None in daylight"}</b></div>
     <div class="next">Sunrise ${sr?nzTime(sr.t):"n/a"} · Sunset ${ss?nzTime(ss.t):"n/a"} · Next new moon ${nn?nzDate(nn):"n/a"} · Next full moon ${nf?nzDate(nf):"n/a"} · Times for the Bay of Plenty (NZ time)</div>`;
-  $("moonpanel").querySelectorAll(".mtog button").forEach(b=>b.onclick=()=>{moonDay=+b.dataset.d;renderMoon();});renderTides();}
-renderMoon();loadTides();
+  $("moonpanel").querySelectorAll(".mtog button").forEach(b=>b.onclick=()=>{moonDay=+b.dataset.d;renderMoon();});renderTides();renderBaro();}
+
+/* ---------- Barometer (ECMWF via Open-Meteo, offshore Bay of Plenty) ----------
+   Shown as a weather-change indicator, not used in the hotspot score: the evidence that pressure itself drives
+   offshore pelagic feeding is weak (a big drop equals ~5 cm of water depth), but falling pressure flags an
+   approaching front/wind change. Each catch records it so your own log can test it. */
+let BARO=null;
+async function loadBaro(){try{const d=await getJSON(`${WX}?latitude=-37.3&longitude=176.8&hourly=pressure_msl&models=ecmwf_ifs025&past_days=2&forecast_days=3&timezone=UTC`);
+  BARO={t:d.hourly.time.map(t=>Date.parse(t+"Z")),p:d.hourly.pressure_msl};}catch(e){BARO=null;}renderBaro();}
+function baroAt(t){if(!BARO)return null;const k=BARO.t.findIndex(x=>x>=t);if(k<3)return null;const p=BARO.p[k],p3=BARO.p[k-3],p24=BARO.p[Math.max(0,k-24)];
+  if(p==null||p3==null)return null;const d3=p-p3,d24=p24!=null?p-p24:null;
+  const trend=Math.abs(d3)<1?"steady":d3<=-3?"falling fast":d3<0?"falling":d3>=3?"rising fast":"rising";
+  const level=p<1005?"low":p>1022?"high":"normal";return{p,d3,d24,trend,level};}
+function renderBaro(){const el=$("baropanel");if(!el)return;const b=baroAt(moonDay===0?Date.now():nzMidnightUtc(1)+9*36e5);
+  if(!b){el.innerHTML=`<div class="ph" style="font-weight:700">Barometer</div><div class="next">Pressure loads when you're online.</div>`;return;}
+  const msg={"steady":"Settled weather. Normal feeding patterns; focus on water temperature, breaks and the moon.",
+    "falling":"Pressure easing ahead of a change. Anglers often report a better bite before a front, but watch the wind forecast.",
+    "falling fast":"Front or low on the way. Often a short hot bite before it arrives, then rough water. Check the marine forecast.",
+    "rising":"Pressure building after a change. Fish can be slow for a day while conditions settle.",
+    "rising fast":"Strong high building in behind a front. Expect a slower bite and freshening wind."}[b.trend];
+  // 48 h sparkline centred on now
+  const now=moonDay===0?Date.now():nzMidnightUtc(1)+9*36e5,k0=BARO.t.findIndex(x=>x>=now-24*36e5),pts=[];for(let k=k0;k<Math.min(BARO.t.length,k0+49);k++)if(BARO.p[k]!=null)pts.push([BARO.t[k],BARO.p[k]]);
+  const mn=Math.min(...pts.map(p=>p[1]))-1,mx=Math.max(...pts.map(p=>p[1]))+1,X=t=>((t-(now-24*36e5))/(48*36e5))*220,Y=v=>34-(v-mn)/(mx-mn)*30;
+  el.innerHTML=`<div class="moonhead"><div><div class="ph">Barometer · ${Math.round(b.p)} hPa, ${b.trend}</div><div class="il">${b.level==="normal"?"Normal":b.level==="low"?"Low":"High"} pressure · ${b.d3>=0?"+":""}${b.d3.toFixed(1)} hPa in 3 h${b.d24!=null?`, ${b.d24>=0?"+":""}${b.d24.toFixed(1)} in 24 h`:""}</div></div>
+    <svg width="220" height="38" viewBox="0 0 220 38" style="flex:0 0 auto"><polyline fill="none" stroke="#7fd0ff" stroke-width="2" points="${pts.map(p=>X(p[0]).toFixed(1)+","+Y(p[1]).toFixed(1)).join(" ")}"/><line x1="110" x2="110" y1="0" y2="38" stroke="#ffb547" stroke-dasharray="2 2"/></svg></div>
+    <div class="why" style="margin-top:6px">${msg}</div>
+    <div class="next">ECMWF forecast for offshore Bay of Plenty. Shown for context only: pressure isn't in the hotspot score because the evidence for offshore fish is weak. Your catch log records it, so the app can tell you if it matters for your fish.</div>`;}
+renderMoon();loadTides();loadBaro();
 
 /* ---------- Marks: charted features + user marks ---------- */
 const CHARTED=[
@@ -1259,7 +1286,7 @@ $("csave").onclick=()=>{if(!pendingCatch)return;const pos=parsePos($("cpos").val
   let tide=null;if(TIDES){const port=TIDES.ports.map(q=>({q,d:hav(q.lat,q.lon,p.la,p.lo)})).sort((a,b)=>a.d-b.d)[0].q,st=tideState(port,t);if(st)tide={port:port.name,rising:st.rising,txt:st.txt};}
   const sp=$("csp").value,lf=MAP.ready?catchFeats(p.la,p.lo):{};
   const rec={t:p.t,la:p.la,lo:p.lo,how:p.how,sp,spn:sp.startsWith("x:")?sp.slice(2):SPECIES[sp].name,mur:c.sst??null,kg:parseFloat($("ckg").value)||null,rel:$("crel").checked,note:$("cnote").value.trim(),
-    f:lf.f||null,r:lf.r||null,sst:c.hima??c.sst??null,anom:c.anom??null,dep:c.dep??null,front:c.front??null,chl:c.chl??null,moon:phaseName(ph),age:+age.toFixed(1),sol:solunarAt(t),tide};for(let k=0;k<count;k++)CATCHES.unshift({...rec});
+    f:lf.f||null,r:lf.r||null,sst:c.hima??c.sst??null,anom:c.anom??null,dep:c.dep??null,front:c.front??null,chl:c.chl??null,moon:phaseName(ph),age:+age.toFixed(1),sol:solunarAt(t),tide,baro:(()=>{const b=baroAt(t);return b?{p:Math.round(b.p),d3:+b.d3.toFixed(1),trend:b.trend}:null;})()};for(let k=0;k<count;k++)CATCHES.unshift({...rec});
   saveCatches();$("cform").style.display="none";pendingCatch=null;$("chint").textContent=`Saved ${count>1?count+" catches":"catch"}. Tight lines.`+(Date.now()-t>2*864e5?" (Conditions are from the latest satellite data, so older catches are approximate.)":"");renderCatches();learnPanel();mapUpdate();};
 const med=a=>{const b=a.filter(x=>x!=null).sort((x,y)=>x-y);return b.length?b[Math.floor(b.length/2)]:null;};
 function renderCatches(){const C=CATCHES;
@@ -1273,14 +1300,15 @@ function renderCatches(){const C=CATCHES;
     <div><small>Within 2 km of a front</small>${pct(fr.filter(c=>c.front<=2).length,fr.length)}${fr.length?` · median ${med(fr.map(c=>c.front)).toFixed(1)} km`:""}</div>
     <div><small>Moon</small>${pct(nf,C.length)} within 4 days of new or full · ${pct(sol,C.length)} in a major/minor period</div>
     <div><small>Tide</small>${td.length?`${pct(ri,td.length)} on the rising tide`:"n/a"}</div>
+    <div><small>Barometer</small>${(()=>{const b=C.filter(c=>c.baro);if(!b.length)return"n/a";const f=b.filter(c=>c.baro.d3<=-1).length,st=b.filter(c=>Math.abs(c.baro.d3)<1).length;return`${pct(f,b.length)} falling, ${pct(st,b.length)} steady · median ${med(b.map(c=>c.baro.p))} hPa`;})()}</div>
     <div><small>Median depth</small>${med(C.map(c=>c.dep))!=null?Math.round(med(C.map(c=>c.dep)))+" m":"n/a"}</div></div>`;
   $("clist").innerHTML=C.map((c,i)=>`<div class="ct"><div class="h"><b>🐟 ${c.spn}${c.kg?` ${c.kg} kg`:""}</b><span class="srcm">${new Date(c.t).toLocaleString("en-NZ",{timeZone:NZTZ,weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"})}${c.rel?" · released":""}</span><button class="del" data-i="${i}" title="Delete">×</button></div>
-    <div class="wpc">${fmtLL(c.la,c.lo)}</div><div class="chips">${c.sst!=null?`<span class="chip">${c.sst.toFixed(1)}°C</span>`:""}${c.anom!=null?`<span class="chip">${c.anom>=0?"+":""}${c.anom.toFixed(1)}°C vs normal</span>`:""}${c.front!=null?`<span class="chip">Front ${c.front<1?"here":c.front.toFixed(1)+" km"}</span>`:""}${c.dep!=null?`<span class="chip">${Math.round(c.dep)} m</span>`:""}<span class="chip">${c.moon}</span><span class="chip">${c.sol==="Outside"?"No solunar period":c.sol+" period"}</span>${c.tide?`<span class="chip">${c.tide.txt} (${c.tide.port})</span>`:""}</div>${c.note?`<div class="wpr">${c.note.replace(/[<>&]/g,"")}</div>`:""}</div>`).join("");
+    <div class="wpc">${fmtLL(c.la,c.lo)}</div><div class="chips">${c.sst!=null?`<span class="chip">${c.sst.toFixed(1)}°C</span>`:""}${c.anom!=null?`<span class="chip">${c.anom>=0?"+":""}${c.anom.toFixed(1)}°C vs normal</span>`:""}${c.front!=null?`<span class="chip">Front ${c.front<1?"here":c.front.toFixed(1)+" km"}</span>`:""}${c.dep!=null?`<span class="chip">${Math.round(c.dep)} m</span>`:""}<span class="chip">${c.moon}</span><span class="chip">${c.sol==="Outside"?"No solunar period":c.sol+" period"}</span>${c.tide?`<span class="chip">${c.tide.txt} (${c.tide.port})</span>`:""}${c.baro?`<span class="chip">${c.baro.p} hPa ${c.baro.trend}</span>`:""}</div>${c.note?`<div class="wpr">${c.note.replace(/[<>&]/g,"")}</div>`:""}</div>`).join("");
   $("clist").querySelectorAll(".del").forEach(b=>b.onclick=()=>{if(!confirm("Delete this catch?"))return;CATCHES.splice(+b.dataset.i,1);saveCatches();renderCatches();learnPanel();mapUpdate();});}
 function drawCatches(g,X,Y,inView){g.font="13px sans-serif";for(const c of CATCHES){const x=X(c.lo),y=Y(c.la);if(!inView(x,y))continue;
   g.fillStyle="#ff5f45";g.strokeStyle="#fff";g.lineWidth=1.8;g.beginPath();g.arc(x,y,6.5,0,7);g.fill();g.stroke();if(VIEW.z>=2.5){g.fillText("🐟",x+7,y+5);}}}
-$("catchcsv").onclick=()=>{const h=["time_utc","lat","lon","species","kg","released","sst_c","anomaly_c","depth_m","front_km","chl","moon","moon_age","solunar","tide","notes"];
-  const rows=CATCHES.map(c=>[c.t,c.la.toFixed(5),c.lo.toFixed(5),c.spn,c.kg??"",c.rel?"yes":"no",c.sst?.toFixed(2)??"",c.anom?.toFixed(2)??"",c.dep!=null?Math.round(c.dep):"",c.front?.toFixed(2)??"",c.chl?.toFixed(3)??"",c.moon,c.age,c.sol,c.tide?`${c.tide.txt} ${c.tide.port}`:"",`"${(c.note||"").replace(/"/g,"'")}"`].join(","));
+$("catchcsv").onclick=()=>{const h=["time_utc","lat","lon","species","kg","released","sst_c","anomaly_c","depth_m","front_km","chl","moon","moon_age","solunar","tide","pressure_hpa","pressure_3h","notes"];
+  const rows=CATCHES.map(c=>[c.t,c.la.toFixed(5),c.lo.toFixed(5),c.spn,c.kg??"",c.rel?"yes":"no",c.sst?.toFixed(2)??"",c.anom?.toFixed(2)??"",c.dep!=null?Math.round(c.dep):"",c.front?.toFixed(2)??"",c.chl?.toFixed(3)??"",c.moon,c.age,c.sol,c.tide?`${c.tide.txt} ${c.tide.port}`:"",c.baro?c.baro.p:"",c.baro?c.baro.d3:"",`"${(c.note||"").replace(/"/g,"'")}"`].join(","));
   const b=new Blob([[h.join(","),...rows].join("\n")],{type:"text/csv"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="bluewater-bite-catches.csv";document.body.appendChild(a);a.click();a.remove();};
 renderCatches();
 
