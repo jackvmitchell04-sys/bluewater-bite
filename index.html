@@ -533,11 +533,11 @@ function flowFromUV(u,v,eta){const U=gradient(u,1/1000),V=gradient(v,1/1000),W=n
   let s=0,c=0;for(let n=0;n<NN;n++){if(isNaN(U.gx[n]+V.gx[n]+U.gy[n]+V.gy[n]))continue;const sn=U.gx[n]-V.gy[n],ss=V.gx[n]+U.gy[n],om=V.gx[n]-U.gy[n];
     W[n]=sn*sn+ss*ss-om*om;zeta[n]=om;div[n]=U.gx[n]+V.gy[n];s+=W[n]*W[n];c++;}
   return{u,v,W,zeta,div,sd:Math.sqrt(s/(c||1)),slope:gradient(eta,1/1000).g};}
-/* keep only eddies big enough to matter (about 25 km across or more), and find their centres */
+/* keep only eddies big enough to matter (about 30 km across or more, sea level at least 1.5 cm off), and find their centres */
 function eddyComponents(A){const seen=new Uint8Array(NN);A.eddyList=[];
   for(let n0=0;n0<NN;n0++){if(!A.eddy[n0]||seen[n0])continue;const sg=A.eddy[n0],q=[n0];seen[n0]=1;let si=0,sj=0,sh=0;
     for(let h=0;h<q.length;h++){const n=q[h],i=n%NX,j=(n-i)/NX;si+=i;sj+=j;sh+=A.slaL[n];for(const[a,b]of[[1,0],[-1,0],[0,1],[0,-1]]){const x=i+a,y=j+b;if(x<0||y<0||x>=NX||y>=NY)continue;const m=ix(x,y);if(!seen[m]&&A.eddy[m]===sg){seen[m]=1;q.push(m);}}}
-    if(q.length<120){for(const n of q)A.eddy[n]=0;continue;}
+    if(q.length<200||Math.abs(sh/q.length)<.015){for(const n of q)A.eddy[n]=0;continue;}
     A.eddyList.push({sign:sg,lat:latOf(sj/q.length),lon:lonOf(si/q.length),km:Math.sqrt(q.length)*AREA.res*KM*.8,h:sh/q.length});}
   const mk=sg=>smooth(Float32Array.from(A.eddy,x=>x===sg?1:0),2);A.eddyW=mk(1);A.eddyC=mk(-1);}
 /* ---------- analysis ---------- */
