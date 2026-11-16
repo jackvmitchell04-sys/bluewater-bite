@@ -1,5 +1,7 @@
 """One-off probe of NOAA catalogs (run from GitHub, prints what exists)."""
 import requests, re, sys
+if sys.argv[1:2] == ["kd"]:
+    import runpy; runpy.run_path("scripts/probe_kd.py"); sys.exit()
 if sys.argv[1:2] == ["l2p"]:
     import runpy; runpy.run_path("scripts/probe_l2p.py"); sys.exit()
 def get(u, t=60):

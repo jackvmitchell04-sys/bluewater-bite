@@ -699,7 +699,7 @@ function waypoints(A,score,n=WP_N){
     if(A.chlDist&&A.chlDist[p.k]<4)why.push("on a chlorophyll edge");
     if(A.convN&&A.convN[p.k]>.5)why.push("currents converging (bait and weed lines)");else if(A.convN&&A.convN[p.k]<-.5)why.push("upwelling edge");
     if(A.slope&&A.slope[p.k]>.05)why.push("steep slope / canyon wall");
-    if(A.anom&&!isNaN(A.anom[p.k])&&Math.abs(A.anom[p.k])>0.5)why.push(`water ${A.anom[p.k]>0?"+":""}${A.anom[p.k].toFixed(1)}°C vs normal`);
+    if(A.anom&&!isNaN(A.anom[p.k])&&Math.abs(A.anom[p.k])>0.5)why.push(`water ${Math.abs(A.anom[p.k]).toFixed(1)}°C ${A.anom[p.k]>0?"warmer":"cooler"} than usual for this date (2003-2014 average)`);
     return{n:w+1,lat:la,lon:lo,score:Math.round(score[p.k]*100),sst:A.sst[L][p.k],brk:(A.fr[L].g[p.k]||0)*2,depth:A.depth[p.k],
       chl:A.chl?A.chl[A.chl.length-1][p.k]:null,change:A.change[p.k],tag:why.join(", "),line,course,ends:[course[0],course[course.length-1]],head:info.h,along:info.along,warm:info.warm,len,mode,
       src:mode==="front"?"following the temperature break":"following the depth contour",port,cv:courseVal(course,score[p.k])};})
@@ -1006,7 +1006,7 @@ function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
   else{rows.push(`<span class="tipT">${c.sst==null?"n/a":c.sst.toFixed(1)+"°C"}</span> <span class="tipm">${c.date||""}</span>`);
     if(c.fc!=null)rows.push(`Forecast ${MAP.A.fcDates[MAP.fcDay]}: ${c.fc.toFixed(1)}°C`);
     if(c.hima!=null)rows.push(`Hourly SST ${c.hima.toFixed(1)}°C${c.sst!=null&&c.hima-c.sst>.8?' <span class="tipm">(skin warmed by afternoon sun on a calm day; the water below is closer to the daily figure)</span>':""}`);
-    if(c.anom!=null)rows.push(`${c.anom>=0?"+":""}${c.anom.toFixed(1)}°C vs normal`);
+    if(c.anom!=null)rows.push(`${c.anom>=0?"+":""}${c.anom.toFixed(1)}°C vs usual for this date <span class="tipm">(2003-2014 average)</span>`);
     if(c.dep!=null)rows.push(`Depth ${Math.round(c.dep)} m`);
     if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³${c.chlAge!=null?` <span class="tipm">(${c.chlAge<.5?"seen today":`seen ${Math.round(c.chlAge)} d ago, moved with the current`})</span>`:""}`);
     if(c.front!=null)rows.push(`Nearest front ${c.front<1?"here":c.front.toFixed(1)+" km"}`);}
