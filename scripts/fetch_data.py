@@ -192,6 +192,70 @@ def pack(lats, lons, times, arr, digits=2):
 OCEAN = {}   # arrays kept for the jobs that run after ocean()
 
 
+# ---------------------------------------------------------------- multi-sensor ocean colour composite
+CHL_SOURCES = [   # (dataset, stride, label)  finest first: on the same day the finest sensor wins
+    ("noaacwNPPVIIRSchlaSectorZXDaily", 2, "S-NPP VIIRS 750 m"),
+    ("noaacwS3AOLCIchlaDaily", 1, "Sentinel-3A OLCI"),
+    ("noaacwS3BOLCIchlaDaily", 1, "Sentinel-3B OLCI"),
+    ("noaacwN20VIIRSchlaDaily", 1, "NOAA-20 VIIRS"),
+]
+KD_SOURCES = [("noaacwNPPVIIRSkd490SectorZXDaily", 2, "S-NPP VIIRS 750 m")]
+MERGE_RES = 0.015
+
+
+def _resample(la, lo, a, LA, LO):
+    """Bilinear-ish sample of a source grid (lats N->S) onto target points; NaN where the source has no data."""
+    la = np.asarray(la); lo = np.asarray(lo)
+    fy = (la[0] - LA) / (la[0] - la[-1]) * (len(la) - 1); fx = (LO - lo[0]) / (lo[-1] - lo[0]) * (len(lo) - 1)
+    y0 = np.clip(np.floor(fy).astype(int), 0, len(la) - 2); x0 = np.clip(np.floor(fx).astype(int), 0, len(lo) - 2)
+    ty = np.clip(fy - y0, 0, 1); tx = np.clip(fx - x0, 0, 1)
+    c = [a[y0, x0], a[y0, x0 + 1], a[y0 + 1, x0], a[y0 + 1, x0 + 1]]; w = [(1 - ty) * (1 - tx), (1 - ty) * tx, ty * (1 - tx), ty * tx]
+    num = sum(np.where(np.isfinite(ci), ci * wi, 0) for ci, wi in zip(c, w)); den = sum(np.where(np.isfinite(ci), wi, 0) for ci, wi in zip(c, w))
+    out = np.where(den > 0.3, num / np.maximum(den, 1e-9), np.nan)
+    out[(fy < 0) | (fy > len(la) - 1) | (fx < 0) | (fx > len(lo) - 1)] = np.nan
+    return out
+
+
+def merged_colour(sources, var, latest, lookback=7, ndays=6):
+    """Newest clear pixel from any sensor, day by day. Returns (packed frames, age-of-pixel frame, label) or (None, None, None)."""
+    lats = list(np.round(np.arange(BOX["lat1"], BOX["lat0"] - 1e-9, -MERGE_RES), 4)); lons = list(np.round(np.arange(BOX["lon0"], BOX["lon1"] + 1e-9, MERGE_RES), 4))
+    LO, LA = np.meshgrid(lons, lats)
+    d_end = dt.date.fromisoformat(latest); d0 = d_end - dt.timedelta(days=lookback + ndays - 1)
+    obs = []          # (date, rank, grid)
+    used = []
+    for rank, (ds, stride, label) in enumerate(sources):
+        got = False
+        for alt in (True, False):
+            try:
+                la, lo, tt, arr = erddap_frames(ds, var, f"[({d0.isoformat()}T00:00:00Z):1:(last)]", alt=alt, stride=stride, pad=0.05)
+                for t, a in zip(tt, arr):
+                    if np.isfinite(a).sum() > 50:
+                        obs.append((dt.date.fromisoformat(t), rank, _resample(la, lo, a, LA, LO)))
+                log(f"colour: {label} {len(tt)} passes, newest {tt[-1] if tt else '-'}")
+                used.append(f"{label} (to {tt[-1]})"); got = True; break
+            except Exception as e:
+                log(f"colour: {ds} {'alt' if alt else 'no-alt'} failed: {str(e)[:90]}")
+        time.sleep(1)
+    if not obs:
+        return None, None, None
+    newest = max(o[0] for o in obs)
+    dates = [newest - dt.timedelta(days=ndays - 1 - k) for k in range(ndays)]
+    frames, age = [], None
+    for day in dates:
+        val = np.full(LA.shape, np.nan); vday = np.full(LA.shape, -1e9)
+        for d, rank, g in sorted(obs, key=lambda o: (o[0], -o[1])):     # older first, finer sensor last on the same day
+            if d > day or (day - d).days > lookback:
+                continue
+            ok = np.isfinite(g) & (g > 0)
+            val[ok] = g[ok]; vday[ok] = d.toordinal()
+        frames.append(val)
+        age = np.where(vday > 0, day.toordinal() - vday, np.nan)
+    cov = float(np.isfinite(frames[-1]).mean())
+    log(f"colour: merged {var} to {newest}, {cov:.0%} of the box has a clear pixel within {lookback} days")
+    label = "Merged " + ", ".join(used) + f": newest clear pixel within {lookback} days, 1.5 km grid"
+    return pack(lats, lons, [d.isoformat() for d in dates], np.array(frames), digits=3), pack(lats, lons, [dates[-1].isoformat()], age[None], digits=0)["frames"][0], label
+
+
 def best_recent(candidates, var, latest, time="[last-5:1:last]", digits=3, max_age=5):
     """Try each (dataset, label) in order; use the first whose newest day is within max_age days of the SST date.
     Near-real-time products with cloud gaps get a running composite (most recent clear pixel wins)."""
@@ -239,18 +303,46 @@ def ocean():
             out["clim"] = pack(*erddap_frames("jplMURSST41clim", "mean_sst", f"[({dt.datetime.strptime(latest, '%Y-%m-%d').timetuple().tm_yday})]", stride=2, pad=0.02), digits=2); log("ocean: clim ok")
         except Exception as e:
             log("ocean: clim failed:", str(e)[:120])
-    chl, label = best_recent([("noaacwNPPN20S3ASCIDINEOF2kmDaily", "NOAA VIIRS + Copernicus Sentinel-3 OLCI, 2 km gap-filled daily"),
+    chl, age, label = merged_colour(CHL_SOURCES, "chlor_a", latest)
+    if chl:
+        out["chl"], out["chl_age"], out["chl_label"] = chl, age, label
+    else:
+      chl, label = best_recent([("noaacwNPPN20S3ASCIDINEOF2kmDaily", "NOAA VIIRS + Copernicus Sentinel-3 OLCI, 2 km gap-filled daily"),
                               ("nesdisVHNnoaaSNPPnoaa20chlaGapfilledDaily", "NOAA VIIRS gap-filled, 9 km daily"),
                               ("noaacwN20VIIRSchlaDaily", "NOAA-20 VIIRS NRT, 4 km daily, cloud gaps filled from earlier days"),
                               ("noaacwNPPVIIRSchlaDaily", "S-NPP VIIRS NRT, 4 km daily, cloud gaps filled from earlier days")], "chlor_a", latest)
-    if chl:
-        out["chl"], out["chl_label"] = chl, label; log("ocean: chl", label, chl["times"][-1])
+      if chl:
+        out["chl"], out["chl_label"] = chl, label; out.pop("chl_age", None); log("ocean: chl", label, chl["times"][-1])
     try:
-        r = erddap_frames("nesdisSSH1day", "sla", "[last-5:1:last]", pad=0.5)
+        try:
+            r = erddap_frames("noaacwBLENDEDsshDaily", "sla", "[last-5:1:last]", pad=0.5); out["sla_label"] = "NOAA blended multi-mission altimetry (S-3A/B, CryoSat-2, Jason-3, SARAL), 25 km daily"
+        except Exception as e:
+            log("ocean: blended sla failed, trying old product:", str(e)[:80])
+            r = erddap_frames("nesdisSSH1day", "sla", "[last-5:1:last]", pad=0.5); out["sla_label"] = "NOAA altimetry 25 km"
         OCEAN["sla"] = r; out["sla"] = pack(*r, digits=3); log("ocean: sla", r[2][-1])
     except Exception as e:
         log("ocean: sla failed:", str(e)[:120])
-    for var in ("kd_490",):
+    try:
+        g = erddap_frames("noaacwBLENDEDNRTcurrentsDaily", "u_current", "[last]", pad=0.5), erddap_frames("noaacwBLENDEDNRTcurrentsDaily", "v_current", "[last]", pad=0.5)
+        OCEAN["geo"] = g; log("ocean: geostrophic currents", g[0][2][-1])
+    except Exception as e:
+        log("ocean: geostrophic currents failed:", str(e)[:100])
+    try:
+        la_, lo_, tt_, a_ = erddap_frames("noaacwLEOACSPOSSTL3SnrtCDaily", "sea_surface_temperature", "[last-2:1:last]", pad=0.02)
+        if np.nanmean(a_) > 200:
+            a_ = a_ - 273.15
+        comp = a_[0].copy()
+        for k in range(1, len(a_)):
+            comp = np.where(np.isfinite(a_[k]), a_[k], comp)
+        out["acspo"] = pack(la_, lo_, [tt_[-1]], comp[None], digits=2); out["acspo_label"] = f"NOAA ACSPO L3S-LEO observed SST, 2 km, {tt_[0]} to {tt_[-1]}"
+        log(f"ocean: ACSPO observed SST {tt_[-1]}, {np.isfinite(comp).mean():.0%} clear")
+    except Exception as e:
+        log("ocean: ACSPO failed:", str(e)[:100])
+    kd, kage, label = merged_colour(KD_SOURCES, "kd_490", latest)
+    if kd:
+        k = kd; kd = {"lats": k["lats"], "lons": k["lons"], "times": k["times"][-1:], "frames": k["frames"][-1:]}
+        out["kd"], out["kd_label"] = kd, label
+    for var in (() if kd else ("kd_490",)):
         kd, label = best_recent([("noaacwNPPN20S3AkdSCIDINEOF2kmDaily", "VIIRS + Sentinel-3 OLCI Kd490, 2 km"),
                                  ("nesdisNPPN20S3AkdSCIDINEOFDaily", "VIIRS + Sentinel-3 OLCI Kd490, 9 km")], var, latest, time="[last]", digits=4, max_age=7)
         if kd:
@@ -431,7 +523,13 @@ def currents():
                             "forecast_days": 6, "wind_speed_unit": "ms", "timezone": "Pacific/Auckland"})
     now = dt.datetime.utcnow() + dt.timedelta(hours=13)
     geo = None
-    sla_fresh = "sla" in OCEAN and "sst" in OCEAN and (dt.date.fromisoformat(OCEAN["sst"][2][-1]) - dt.date.fromisoformat(OCEAN["sla"][2][-1])).days <= 10
+    if "geo" in OCEAN:
+        (gla, glo, gt, gu), (_, _, _, gv) = OCEAN["geo"]
+        gla = np.array(gla); glo = np.array(glo)
+        def gat(a, b, F):
+            j = np.abs(gla - a).argmin(); i = np.abs(glo - b).argmin(); v = F[0][j, i]
+            return float(v) if np.isfinite(v) else None
+    sla_fresh = "geo" not in OCEAN and "sla" in OCEAN and "sst" in OCEAN and (dt.date.fromisoformat(OCEAN["sst"][2][-1]) - dt.date.fromisoformat(OCEAN["sla"][2][-1])).days <= 10
     if not sla_fresh:
         log("currents: altimetry stale or missing, Ekman drift only (detailed currents come from model_grid)")
     if sla_fresh:
@@ -460,7 +558,11 @@ def currents():
         c, s_ = np.cos(np.radians(45)), np.sin(np.radians(45))
         ue, ve = k * (wu * c - wv * s_), k * (wu * s_ + wv * c)
         ugv = vgv = None
-        if geo:
+        if "geo" in OCEAN:
+            ugv, vgv = gat(plat, plon, gu), gat(plat, plon, gv)
+            if ugv is None or vgv is None or np.hypot(ugv, vgv) > 1.5:
+                ugv = vgv = None
+        elif geo:
             ugv, vgv = geo[2](plat, plon, geo[0]), geo[2](plat, plon, geo[1])
             if ugv is None or vgv is None or np.hypot(ugv, vgv) > 1.5:
                 ugv = vgv = None
@@ -476,7 +578,7 @@ def currents():
                     "ug": None if ugv is None else round(ugv, 3), "vg": None if vgv is None else round(vgv, 3),
                     "wu": round(wu, 1), "wv": round(wv, 1), "wd": dw})
     with open(os.path.join(OUT, "currents.json"), "w") as f:
-        json.dump({"source": "Geostrophic (NOAA altimetry) + Ekman drift from ECMWF IFS 0.25 deg wind", "updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z",
+        json.dump({"source": "NOAA blended geostrophic currents + Ekman drift from ECMWF IFS 0.25 deg wind", "updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z",
                    "wind_days": days, "points": out}, f, separators=(",", ":"))
     log("currents: wrote", len(out), "points")
 

@@ -552,7 +552,8 @@ function eddyComponents(A){const seen=new Uint8Array(NN);A.eddyList=[];
   for(let n0=0;n0<NN;n0++){if(!A.eddy[n0]||seen[n0])continue;const sg=A.eddy[n0],q=[n0];seen[n0]=1;let si=0,sj=0,sh=0;
     for(let h=0;h<q.length;h++){const n=q[h],i=n%NX,j=(n-i)/NX;si+=i;sj+=j;sh+=A.slaL[n];for(const[a,b]of[[1,0],[-1,0],[0,1],[0,-1]]){const x=i+a,y=j+b;if(x<0||y<0||x>=NX||y>=NY)continue;const m=ix(x,y);if(!seen[m]&&A.eddy[m]===sg){seen[m]=1;q.push(m);}}}
     if(q.length<200||Math.abs(sh/q.length)<.015){for(const n of q)A.eddy[n]=0;continue;}
-    A.eddyList.push({sign:sg,lat:latOf(sj/q.length),lon:lonOf(si/q.length),km:Math.sqrt(q.length)*AREA.res*KM*.8,h:sh/q.length});}
+    let sat=null;if(A.sla&&A.mu){const S=A.sla[A.sla.length-1];let t=0,c=0;for(const n of q)if(!isNaN(S[n])){t+=S[n];c++;}if(c)sat=t/c;}
+    A.eddyList.push({sign:sg,lat:latOf(sj/q.length),lon:lonOf(si/q.length),km:Math.sqrt(q.length)*AREA.res*KM*.8,h:sh/q.length,sat,conf:sat!=null&&Math.sign(sat)===sg&&Math.abs(sat)>.03});}
   const mk=sg=>smooth(Float32Array.from(A.eddy,x=>x===sg?1:0),2);A.eddyW=mk(1);A.eddyC=mk(-1);}
 /* ---------- analysis ---------- */
 function analyse(D){
@@ -566,6 +567,9 @@ function analyse(D){
     // must be backed by a real gradient in the daily SST within ~4 km
     A.himaEdge=cayulaCornillon(smooth(D.hima),{minDT:0.25});const r=gradFronts(D.hima),G=A.fr[L].g,gv=[...G].filter(x=>!isNaN(x)).sort((a,b)=>a-b),gmin=gv[Math.floor(gv.length*.6)]||0;
     for(let j=2;j<NY-2;j++)for(let i=2;i<NX-2;i++){const n=ix(i,j);if(!(A.himaEdge[n]||r[n]))continue;let ok=false;
+      for(let b=-2;b<=2&&!ok;b++)for(let a=-2;a<=2;a++)if(G[ix(i+a,j+b)]>=gmin){ok=true;break;}if(ok)A.cc[L][n]=1;}}
+  if(D.acspo){const r=gradFronts(fillGaps(Float32Array.from(D.acspo),D.land,2)),G=A.fr[L].g,gv=[...G].filter(x=>!isNaN(x)).sort((a,b)=>a-b),gmin=gv[Math.floor(gv.length*.6)]||0;
+    for(let j=2;j<NY-2;j++)for(let i=2;i<NX-2;i++){const n=ix(i,j);if(!r[n]||isNaN(D.acspo[n]))continue;let ok=false;
       for(let b=-2;b<=2&&!ok;b++)for(let a=-2;a<=2;a++)if(G[ix(i+a,j+b)]>=gmin){ok=true;break;}if(ok)A.cc[L][n]=1;}}
   A.ccFreq=new Float32Array(NN);for(const e of A.cc)for(let n=0;n<NN;n++)A.ccFreq[n]+=e[n]/A.cc.length;
   A.ccFreqS=smooth(A.ccFreq,2);
@@ -847,7 +851,7 @@ function draw(){
     for(const s of MAP.soundings){if(n>=45)break;const x=X(s.lon),y=Y(s.lat);if(x<10||y<10||x>W-20||y>H-10)continue;if(sp.some(([a,b])=>Math.abs(a-x)<34&&Math.abs(b-y)<16))continue;sp.push([x,y]);n++;
       g.lineWidth=3;g.strokeStyle="rgba(255,255,255,.8)";g.strokeText(s.d,x-8,y+4);g.fillStyle="#0b2a55";g.fillText(s.d,x-8,y+4);}}
   if(MAP.showEddies&&A.eddyW){segs(A.eddyW,.5,"rgba(255,80,60,.95)",2.2,[7,4]);segs(A.eddyC,.5,"rgba(80,160,255,.95)",2.2,[7,4]);
-    g.font="bold 11px sans-serif";for(const e of A.eddyList){const x=X(e.lon),y=Y(e.lat);if(!inView(x,y))continue;const t=(e.sign>0?"Warm eddy":"Cold eddy")+` ~${Math.round(e.km)} km`;
+    g.font="bold 11px sans-serif";for(const e of A.eddyList){const x=X(e.lon),y=Y(e.lat);if(!inView(x,y))continue;const t=(e.sign>0?"Warm eddy":"Cold eddy")+` ~${Math.round(e.km)} km`+(e.conf?" ✓ satellite":"");
       g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.75)";g.strokeText(t,x-30,y);g.fillStyle=e.sign>0?"#ff9a85":"#9cc8ff";g.fillText(t,x-30,y);}}
   if(MAP.showFronts&&!chartMode){const e=A.cc[Math.min(MAP.day,A.cc.length-1)],r=Math.min(3,Math.max(.9,cw*.35));g.fillStyle="rgba(255,255,255,.85)";
     for(let n=0;n<NN;n++)if(e[n]&&!A.land[n]){const i=n%NX,j=(n-i)/NX,x=X(lonOf(i)),y=Y(latOf(j));if(!inView(x,y))continue;g.beginPath();g.arc(x,y,r,0,7);g.fill();}
@@ -920,7 +924,7 @@ function conditionsAt(la,lo,day){const A=MAP.A;if(!A)return{};const i=Math.round
   let land=A.land[n],dep=A.depth[n];if(MAP.BF&&!A.sample){const B=MAP.BF,fi=Math.round((lo-B.lon0)/B.res),fj=Math.round((B.lat1-la)/B.res);if(fi>=0&&fj>=0&&fi<B.nx&&fj<B.ny){dep=B.depth[fj*B.nx+fi];land=isNaN(dep);}}
   const f=x=>x==null||isNaN(x)?null:x;const dd=detailDepth(la,lo);if(dd!==undefined){dep=dd;land=isNaN(dd);}
   return{land,dep:f(dep),sst:f(A.sst[L][n]),date:A.times[L],hima:A.hima?f(A.hima[n]):null,anom:A.anom?f(A.anom[n]):null,
-    chl:A.chl?f(A.chl[Math.min(L,A.chl.length-1)][n]):null,front:f(A.frontDist[n]),fc:MAP.layer==="fc"&&A.fcDelta?f(fcField(A,MAP.fcDay)[n]):null,res:reserveAt(la,lo)};}
+    chl:A.chl?f(A.chl[Math.min(L,A.chl.length-1)][n]):null,front:f(A.frontDist[n]),fc:MAP.layer==="fc"&&A.fcDelta?f(fcField(A,MAP.fcDay)[n]):null,res:reserveAt(la,lo),chlAge:A.chlAge?f(A.chlAge[n]):null};}
 
 /* probe readout for a tapped point */
 function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
@@ -933,7 +937,7 @@ function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
     if(c.hima!=null)rows.push(`Hourly SST ${c.hima.toFixed(1)}°C`);
     if(c.anom!=null)rows.push(`${c.anom>=0?"+":""}${c.anom.toFixed(1)}°C vs normal`);
     if(c.dep!=null)rows.push(`Depth ${Math.round(c.dep)} m`);
-    if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³`);
+    if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³${c.chlAge!=null?` <span class="tipm">(seen ${c.chlAge<.5?"on the latest pass":Math.round(c.chlAge)+" d before"})</span>`:""}`);
     if(c.front!=null)rows.push(`Nearest front ${c.front<1?"here":c.front.toFixed(1)+" km"}`);}
   rows.push(`<a href="#" class="tipgo" style="color:#7fd0ff">Navigate here</a>`);
   $("maptip").innerHTML=rows.filter(Boolean).join("<br>")+'<span class="tipx">×</span>';$("maptip").querySelector(".tipx").onclick=ev=>{ev.stopPropagation();MAP.probe=null;redraw();};
@@ -1076,7 +1080,12 @@ async function loadMap(){
     let hima=null;
     if(hj){hima=jsonGrid(hj);for(let n=0;n<NN;n++)if(land[n])hima[n]=NaN;src.push({ok:1,name:"Hourly SST (Himawari-9)",detail:`${hj.hours.length} hourly scans to ${hj.hours[hj.hours.length-1]} UTC, ${Math.round(hj.coverage*100)}% cloud-free`});}
     else src.push({ok:0,name:"Hourly SST (Himawari-9)",detail:"Comes from the morning server job (hosted version only)"});
-    D={sst:S.fields,times,chl,depth,land,curr:cur,mu,mv,eta,wind,fcDelta,fcDates,sla,clim,kd,hima,himaCov:hj?hj.coverage:0,sample:false};
+    let acspo=null,chlAgeG=null;
+    if(OJ&&OJ.acspo){const o=OJ.acspo;acspo=jsonGrid({lats:o.lats,lons:o.lons,values:o.frames[0]});for(let n=0;n<NN;n++)if(land[n])acspo[n]=NaN;
+      let c=0;for(let n=0;n<NN;n++)if(!isNaN(acspo[n]))c++;src.push({ok:1,name:"Observed SST, front check",detail:`${OJ.acspo_label}, ${Math.round(c/NN*100)}% clear`});}
+    if(chl&&OJ.chl_age){chlAgeG=jsonGrid({lats:OJ.chl.lats,lons:OJ.chl.lons,values:OJ.chl_age});}
+    if(sla&&OJ.sla_label)src.push({ok:1,name:"Satellite altimetry (eddy check)",detail:`${OJ.sla_label}, to ${OJ.sla.times[OJ.sla.times.length-1]}`});
+    D={sst:S.fields,times,chl,chlAge:chlAgeG,depth,land,curr:cur,mu,mv,eta,wind,fcDelta,fcDates,sla,clim,kd,hima,acspo,himaCov:hj?hj.coverage:0,sample:false};
   }catch(e){D=sampleData();MAP.src=[{sample:1,name:"Sample data",detail:"Live feeds unreachable from this preview. Open the file directly in a browser."}];}
   const BF=D.sample?null:MAP.BF;
   MAP.contours=buildContours(BF||{nx:NX,ny:NY,lat1:AREA.lat1,lon0:AREA.lon0,res:AREA.res,depth:D.depth});
