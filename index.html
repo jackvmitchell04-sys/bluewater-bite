@@ -976,7 +976,7 @@ async function loadMap(){
       const sp=await erddap("jplMURSST41","analysed_sst",{time:"[last-5:1:last]",stride:2,pad:.02});S=toGrids(sp,"analysed_sst");times=S.times.map(t=>t.slice(0,10));
       const [c,h,cl]=await Promise.all([erddap("nesdisVHNnoaaSNPPnoaa20chlaGapfilledDaily","chlor_a",{time:"[last-5:1:last]",alt:true,pad:.1}).catch(()=>null),erddap("nesdisSSH1day","sla",{time:"[last-5:1:last]",pad:.5}).catch(()=>null),erddap("jplMURSST41clim","mean_sst",{time:`[(${doy(times[times.length-1])})]`,stride:2,pad:.02}).catch(()=>null)]);
       cp=c?toGrids(c,"chlor_a").fields:null;hp=h?toGrids(h,"sla").fields:null;clp=cl?toGrids(cl,"mean_sst").fields[0]:null;}
-    src.push({ok:1,name:"Sea surface temperature",detail:`NASA JPL MUR, 1 km daily, ${times[0]} to ${times[times.length-1]}`+(OJ?` · fetched ${OJ.updated.slice(0,16).replace("T"," ")} UTC`:"")});
+    src.push({ok:1,name:"Sea surface temperature",detail:`${(OJ&&OJ.sst_label)||"NASA JPL MUR, 1 km daily"}, ${times[0]} to ${times[times.length-1]}`+(OJ?` · fetched ${OJ.updated.slice(0,16).replace("T"," ")} UTC`:"")});
     let land=new Uint8Array(NN),depth=new Float32Array(NN);
     if(BF0){for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){const fi=Math.round((lonOf(i)-BF0.lon0)/BF0.res),fj=Math.round((BF0.lat1-latOf(j))/BF0.res),n=ix(i,j);
       const v=(fi>=0&&fj>=0&&fi<BF0.nx&&fj<BF0.ny)?BF0.depth[fj*BF0.nx+fi]:NaN;depth[n]=v;land[n]=isNaN(v)?1:0;}

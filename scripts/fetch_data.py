@@ -159,7 +159,7 @@ def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
                 if "403" in str(e) or "503" in str(e) or "timed out" in str(e):
                     break          # server refusing us: try the next mirror
         if r is None and erd == ERDS[-2]:
-            time.sleep(60)
+            __import__("time").sleep(60)
         if r is not None:
             if erd != ERDS[0]:
                 log("  (from mirror", erd.split("/")[2] + ")")
@@ -209,9 +209,19 @@ def best_recent(candidates, var, latest, time="[last-5:1:last]", digits=3, max_a
 def ocean():
     """All NOAA ERDDAP layers the app needs (browsers can't read ERDDAP directly)."""
     out = {"updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z"}
-    lats, lons, times, sst = erddap_frames("jplMURSST41", "analysed_sst", "[last-5:1:last]", stride=2, pad=0.02)
+    sst = None
+    for ds, stride, label in [("jplMURSST41", 2, "NASA JPL MUR, 1 km daily"), ("noaacwBLENDEDsstDNDaily", 1, "NOAA Geo-Polar Blended, 5 km daily (MUR server unavailable)")]:
+        try:
+            lats, lons, times, sst = erddap_frames(ds, "analysed_sst", "[last-5:1:last]", stride=stride, pad=0.05)
+            if np.nanmean(sst) > 200:
+                sst = sst - 273.15
+            out["sst_label"] = label; break
+        except Exception as e:
+            log("ocean: SST", ds, "failed:", str(e)[:100]); sst = None
+    if sst is None:
+        raise RuntimeError("no SST source reachable")
     OCEAN["sst"] = (lats, lons, times, sst)
-    out["sst"] = pack(lats, lons, times, sst); log("ocean: MUR SST", times[0], "to", times[-1])
+    out["sst"] = pack(lats, lons, times, sst); log("ocean:", out["sst_label"], times[0], "to", times[-1])
     try:
         out["clim"] = pack(*erddap_frames("jplMURSST41clim", "mean_sst", f"[({dt.datetime.strptime(times[-1], '%Y-%m-%d').timetuple().tm_yday})]", stride=2, pad=0.02), digits=2); log("ocean: clim ok")
     except Exception as e:
