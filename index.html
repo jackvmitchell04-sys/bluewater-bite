@@ -112,7 +112,6 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
 .marks{display:flex;flex-direction:column;gap:6px}
 .mk{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:13px}
 .mk .sw{width:10px;height:10px;transform:rotate(45deg);flex:0 0 10px}.mk .nm{font-weight:600;cursor:pointer}.mk .ll{color:var(--muted);font-family:ui-monospace,Menlo,monospace;font-size:12px;margin-left:auto}
-.mrk{display:inline-block;min-width:18px;padding:0 4px;margin-right:6px;border-radius:5px;background:#ff8a00;color:#fff;font:700 11px sans-serif;text-align:center}
 .aptag{font-size:10px;background:rgba(255,181,71,.2);color:var(--warm);border-radius:5px;padding:1px 5px;margin-left:6px}.src2{font-size:11px;color:var(--muted)}
 .mk .del{background:none;border:0;color:var(--muted);font-size:16px;cursor:pointer}
 .mkform{display:none;background:var(--panel2);border:1px solid var(--accent);border-radius:12px;padding:10px;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
@@ -185,7 +184,7 @@ ol.plan b.stop{color:var(--accent)}ol.plan{margin:10px 0 6px;padding-left:22px;l
     <div class="cform" id="cform"><input id="cpos" placeholder="Position, e.g. 37 36.363 S 177 19.661 E"><input id="ctime" type="datetime-local"><select id="csp"></select><input id="cnum" type="number" min="1" max="20" value="1" title="How many" style="flex:0 0 70px"><input id="ckg" placeholder="Weight kg (optional)" inputmode="decimal"><label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="crel" checked> Released</label><input id="cnote" placeholder="Notes: lure, depth, birds..."><button class="btn pri" id="csave">Save catch</button><button class="btn" id="ccancel">Cancel</button></div>
     <div id="learnbox"></div><div id="cstats"></div><div id="clist"></div>
     <h3>Data inputs</h3><div id="sources"></div>
-    <h3>Waypoints and trolling courses</h3>
+    <h3>Waypoints and trolling courses</h3><p class="exp" style="margin:-4px 0 8px">Ranked 1 to 20 by how likely fish are along the whole trolling course today (WP1 is the best bet). The number on the right is that likelihood relative to WP1.</p>
     <div class="actions"><button class="btn pri" id="gpxbtn">Download GPX for chartplotter</button><button class="btn" id="copybtn">Copy waypoints</button></div>
     <div id="wplist"></div>
   </div>
@@ -674,6 +673,10 @@ function waypoints(A,score,n=WP_N){
   cells.sort((a,b)=>score[b]-score[a]);
   const top=score[cells[0]]||0,picked=[];
   for(const k of cells){if(picked.length>=n||score[k]<top*.3)break;const i=k%NX,j=(k-i)/NX;if(picked.some(p=>Math.hypot(p.i-i,(p.j-j)*1.25)<=WP_R))continue;picked.push({i,j,k});}
+  const at=(la,lo)=>{const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res);if(i<0||j<0||i>=NX||j>=NY)return NaN;const n=ix(i,j);return A.land[n]||RM[n]?NaN:score[n];};
+  const courseVal=(c,peak)=>{let s=0,k=0;for(let q=1;q<c.length;q++){const a=c[q-1],b=c[q],st=Math.max(1,Math.ceil(hav(a[0],a[1],b[0],b[1])/(.2*NM)));
+      for(let t=0;t<st;t++){const v=at(a[0]+(b[0]-a[0])*t/st,a[1]+(b[1]-a[1])*t/st);if(!isNaN(v)){s+=v;k++;}}}return .4*peak+.6*(k?s/k:peak);};
+  // rank by the whole trolling course (fish anywhere along it), not just its best cell; 1 = most likely
   return picked.map((p,w)=>{const la=latOf(p.j),lo=lonOf(p.i);
     const onFront=Math.hypot(A.fr[L].gx[p.k],A.fr[L].gy[p.k])>0.05||A.frontDist[p.k]<3,mode=onFront?"front":"depth";
     let line=traceLine(A,la,lo,mode,3*NM);if(lineLen(line)<1.5)line=[[la,lo],[la+.01,lo]];
@@ -690,7 +693,8 @@ function waypoints(A,score,n=WP_N){
     if(A.anom&&!isNaN(A.anom[p.k])&&Math.abs(A.anom[p.k])>0.5)why.push(`water ${A.anom[p.k]>0?"+":""}${A.anom[p.k].toFixed(1)}°C vs normal`);
     return{n:w+1,lat:la,lon:lo,score:Math.round(score[p.k]*100),sst:A.sst[L][p.k],brk:(A.fr[L].g[p.k]||0)*2,depth:A.depth[p.k],
       chl:A.chl?A.chl[A.chl.length-1][p.k]:null,change:A.change[p.k],tag:why.join(", "),line,course,ends:[course[0],course[course.length-1]],head:info.h,along:info.along,warm:info.warm,len,mode,
-      src:mode==="front"?"following the temperature break":"following the depth contour",port};});}
+      src:mode==="front"?"following the temperature break":"following the depth contour",port,cv:courseVal(course,score[p.k])};})
+    .sort((a,b)=>b.cv-a.cv).map((w,k,all)=>({...w,n:k+1,score:Math.round(w.cv/(all[0].cv||1)*100)}));}
 
 /* ---------- formatting & palettes ---------- */
 const ddm=(v,pos,neg)=>{const a=Math.abs(v),d=Math.floor(a);return`${d}°${((a-d)*60).toFixed(3).padStart(6,"0")}'${v<0?neg:pos}`;};
@@ -1047,7 +1051,7 @@ function renderFcDays(){const el=$("fcdays"),A=MAP.A;if(MAP.layer!=="fc"||!A||!A
 
 function wpCards(){
   $("wplist").innerHTML=MAP.wps.map(w=>`<div class="wp ${MAP.sel===w.n?"sel":""}" data-n="${w.n}">
-    <div class="wph"><span class="wpn">WP${w.n}</span><span class="wps">${w.score}</span></div>
+    <div class="wph"><span class="wpn">WP${w.n}${w.n===1?" · best bet":""}</span><span class="wps" title="Fish likelihood along the whole course, best course = 100">${w.score}</span></div>
     <div class="wpt">${w.tag}</div>
     <div class="wpc">${fmtLL(w.lat,w.lon)}</div>
     <div class="chips"><span class="chip">${w.sst.toFixed(1)}°C</span><span class="chip">Break ${w.brk.toFixed(2)}°C/2 km</span><span class="chip">${Math.round(w.depth)} m deep</span>${w.chl!=null&&!isNaN(w.chl)?`<span class="chip">Chl ${w.chl.toFixed(2)}</span>`:""}<span class="chip">5-day ${w.change>=0?"+":""}${w.change.toFixed(1)}°C</span></div>
@@ -1065,7 +1069,7 @@ function gpx(){const t=new Date().toISOString();
   MAP.wps.map(w=>`<rte><name>BB Troll ${w.n}</name>${w.course.map((e,k)=>`<rtept lat="${e[0].toFixed(5)}" lon="${e[1].toFixed(5)}"><name>T${w.n}-${k+1}</name></rtept>`).join("")}</rte>`).join("\n")+"\n</gpx>";}
 
 function mapUpdate(){if(!MAP.ready)return;MAP.score=scoreField(MAP.A,state.sp);MAP.scoreVer=(MAP.scoreVer||0)+1;let m=0;for(const v of MAP.score)if(v>m)m=v;MAP.scoreMax=m||1;
-  MAP.wps=waypoints(MAP.A,MAP.score);MAP.sel=null;draw();wpCards();renderMarkList();}
+  MAP.wps=waypoints(MAP.A,MAP.score);MAP.sel=null;draw();wpCards();}
 
 /* ---------- loading ---------- */
 async function loadMap(){
@@ -1336,25 +1340,14 @@ function parsePos(t){t=t.trim().toUpperCase().replace(/[°'′"]/g," ");
   const m=t.match(/(\d+)\s+(\d+(?:\.\d+)?)\s*([NS])\D*?(\d+)\s+(\d+(?:\.\d+)?)\s*([EW])/);if(m){const la=(+m[1]+ +m[2]/60)*(m[3]==="S"?-1:1),lo=(+m[4]+ +m[5]/60)*(m[6]==="W"?-1:1);return[la,lo];}
   const m2=t.match(/([NS])\s*(\d+)\s+(\d+(?:\.\d+)?)\D*?([EW])\s*(\d+)\s+(\d+(?:\.\d+)?)/);if(m2)return[(+m2[2]+ +m2[3]/60)*(m2[1]==="S"?-1:1),(+m2[5]+ +m2[6]/60)*(m2[4]==="W"?-1:1)];
   return null;}
-// rank marks by today's hotspot score: best cell within 1.5 nm (reserves excluded), top 20 get a number
-function markRanks(){if(!MAP.ready||!MAP.score)return null;const key=MAP.scoreVer+"|"+allMarks().length;if(MAP.mrKey===key)return MAP.mr;
-  const A=MAP.A,S=MAP.score,RM=resMask(),sea=[];for(let k=0;k<NN;k++)if(!A.land[k]&&!isNaN(S[k])&&!RM[k])sea.push(S[k]);sea.sort((a,b)=>a-b);
-  const out=new Map();allMarks().map(m=>{const r=1.5,ri=Math.ceil(r*NM/(AREA.res*KM*Math.cos(m.la*RAD))),rj=Math.ceil(r*NM/(AREA.res*KM)),i0=Math.round((m.lo-AREA.lon0)/AREA.res),j0=Math.round((AREA.lat1-m.la)/AREA.res);
-    let b=-1;for(let j=j0-rj;j<=j0+rj;j++)for(let i=i0-ri;i<=i0+ri;i++){if(i<0||j<0||i>=NX||j>=NY)continue;const n=ix(i,j);if(A.land[n]||isNaN(S[n])||RM[n])continue;if(S[n]>b)b=S[n];}
-    let lo=0,hi=sea.length;while(lo<hi){const md=(lo+hi)>>1;if(sea[md]<b)lo=md+1;else hi=md;}return{m,b,pct:sea.length?lo/sea.length:0};})
-   .filter(x=>x.b>0).sort((a,c)=>c.b-a.b).slice(0,20).forEach((x,k)=>out.set(x.m.n+"|"+x.m.la.toFixed(4),{r:k+1,pct:x.pct}));
-  MAP.mrKey=key;MAP.mr=out;return out;}
-const markRank=m=>{const R=markRanks();return R&&R.get(m.n+"|"+m.la.toFixed(4));};
-function renderMarkList(){const L=allMarks().slice().sort((a,b)=>((markRank(a)||{r:99}).r-(markRank(b)||{r:99}).r));
-  $("marklist").innerHTML=L.map(m=>`<div class="mk"><span class="sw" style="${m.ap?"border:2px solid #ffb547;background:transparent":`background:${m.ch?"#ffd34d":"#ff5fc8"}`}"></span><span>${(k=>k?`<span class="mrk">${k.r}</span>`:"")(markRank(m))}<span class="nm" data-la="${m.la}" data-lo="${m.lo}">${m.n}</span>${(k=>k?` <span class="src2">top ${Math.max(1,Math.round((1-k.pct)*100))}% of today's water for ${SPECIES[state.sp].name||state.sp}</span>`:"")(markRank(m))}${m.ap?'<span class="aptag">approx</span>':""}${m.src?`<br><span class="src2">${m.src}</span>`:""}</span><span class="ll">${fmtLL(m.la,m.lo)}</span>${m.ch?"":`<button class="del" data-i="${m.i}" title="Delete">×</button>`}</div>`).join("");
+function renderMarkList(){const L=allMarks();
+  $("marklist").innerHTML=L.map(m=>`<div class="mk"><span class="sw" style="${m.ap?"border:2px solid #ffb547;background:transparent":`background:${m.ch?"#ffd34d":"#ff5fc8"}`}"></span><span><span class="nm" data-la="${m.la}" data-lo="${m.lo}">${m.n}</span>${m.ap?'<span class="aptag">approx</span>':""}${m.src?`<br><span class="src2">${m.src}</span>`:""}</span><span class="ll">${fmtLL(m.la,m.lo)}</span>${m.ch?"":`<button class="del" data-i="${m.i}" title="Delete">×</button>`}</div>`).join("");
   $("marklist").querySelectorAll(".nm").forEach(el=>el.onclick=()=>{VIEW.z=Math.max(VIEW.z,4);VIEW.clat=+el.dataset.la;VIEW.clon=+el.dataset.lo;MAP.target={n:el.textContent,la:+el.dataset.la,lo:+el.dataset.lo};probeAt(+el.dataset.la,+el.dataset.lo);$("mapcv").scrollIntoView({behavior:"smooth",block:"center"});});
   $("marklist").querySelectorAll(".del").forEach(el=>el.onclick=()=>{USERMARKS.splice(+el.dataset.i,1);saveMarks();renderMarkList();redraw();});}
 function drawMarks(g,X,Y,W,H){if(!MAP.showMarks)return;g.font="bold 11px sans-serif";
   for(const m of allMarks()){const x=X(m.lo),y=Y(m.la);if(x<-10||y<-10||x>W+10||y>H+10)continue;
     g.save();g.translate(x,y);g.rotate(Math.PI/4);if(m.ap){g.strokeStyle="#000";g.lineWidth=3.5;g.strokeRect(-5,-5,10,10);g.strokeStyle="#ffb547";g.lineWidth=2;g.strokeRect(-5,-5,10,10);}else{g.fillStyle=m.ch?"#ffd34d":"#ff5fc8";g.strokeStyle="#000";g.lineWidth=1.2;g.fillRect(-4,-4,8,8);g.strokeRect(-4,-4,8,8);}g.restore();
-    const rk=markRank(m);if(rk){g.save();g.font="bold 10px sans-serif";const t=String(rk.r),w=Math.max(14,g.measureText(t).width+6);g.fillStyle=rk.r<=3?"#ff3b30":rk.r<=10?"#ff8a00":"#c9a400";
-      g.beginPath();g.roundRect(x-w/2,y+7,w,13,4);g.fill();g.strokeStyle="#000";g.lineWidth=1;g.stroke();g.fillStyle="#fff";g.textAlign="center";g.fillText(t,x,y+17);g.restore();}
-    if(VIEW.z>=1.6||!m.ch||rk&&rk.r<=5){g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.8)";g.strokeText(m.n,x+7,y-6);g.fillStyle=m.ap?"#ffc978":m.ch?"#ffe58a":"#ffb3e6";g.fillText((m.ap?"≈ ":"")+m.n,x+7,y-6);}}}
+    if(VIEW.z>=1.6||!m.ch){g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.8)";g.strokeText(m.n,x+7,y-6);g.fillStyle=m.ap?"#ffc978":m.ch?"#ffe58a":"#ffb3e6";g.fillText((m.ap?"≈ ":"")+m.n,x+7,y-6);}}}
 let addingMark=false;
 $("addmark").onclick=()=>{addingMark=true;$("mkform").style.display="flex";$("mkname").value="";$("mkpos").value="";$("mkhint").textContent="Tap the map to drop the mark, or type the position (e.g. 37 26.752 S 176 20.164 E, or -37.446, 176.336).";$("mkname").focus();};
 $("mkcancel").onclick=()=>{addingMark=false;$("mkform").style.display="none";$("mkhint").textContent="Solid yellow: official or surveyed positions. Hollow orange (≈): approximate, worked out from skipper descriptions and depth contours. Pink: your own marks, saved on this device.";};

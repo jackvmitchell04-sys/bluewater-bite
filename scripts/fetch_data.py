@@ -20,11 +20,22 @@ import requests as _rq
 _rq_get = _rq.get
 
 
+_DEAD = {}
+
+
 def _get_deadline(url, params=None, timeout=60, **kw):
-    """requests.get with a hard wall-clock limit: a server that trickles bytes can't stall the job for 20 minutes."""
+    """requests.get with a hard wall-clock limit: a server that trickles bytes can't stall the job for 20 minutes.
+    A host that fails to connect twice is skipped for the rest of the run, so the mirrors take over at once."""
     limit = timeout if isinstance(timeout, (int, float)) else 120
+    host = url.split("/")[2]
+    if _DEAD.get(host, 0) >= 2:
+        raise _rq.ConnectionError(f"{host} skipped: not answering this run")
     t0 = time.monotonic()
-    r = _rq_get(url, params=params, timeout=(15, min(limit, 60)), stream=True, **kw)
+    try:
+        r = _rq_get(url, params=params, timeout=(10, min(limit, 60)), stream=True, **kw)
+    except (_rq.ConnectionError, _rq.Timeout):
+        _DEAD[host] = _DEAD.get(host, 0) + 1
+        raise
     buf = []
     for chunk in r.iter_content(1 << 16):
         buf.append(chunk)
