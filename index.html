@@ -172,9 +172,9 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
     <div class="mkform" id="mkform"><input id="mkname" placeholder="Name, e.g. The Hook"><input id="mkpos" placeholder="37 26.752 S 176 20.164 E"><button class="btn pri" id="mksave">Save</button><button class="btn" id="mkcancel">Cancel</button></div>
     <div class="marks" id="marklist"></div>
     <h3>Catch log</h3>
-    <div class="actions"><button class="catchbtn" id="fishon">🎣 Fish on!</button><button class="btn" id="catchcsv">Export CSV</button></div>
+    <div class="actions" style="flex-wrap:wrap"><button class="catchbtn" id="fishon">🎣 Fish on!</button><button class="btn" id="pastcatch">+ Log a past or friend's catch</button><button class="btn" id="catchcsv">Export CSV</button></div>
     <div class="mkhint" id="chint">Saves where and when you hooked up, with the water temp, front distance, depth, moon and tide at that spot. Uses your GPS if ◎ is on, otherwise the last point you tapped. Stored on this device.</div>
-    <div class="cform" id="cform"><select id="csp"></select><input id="ckg" placeholder="Weight kg (optional)" inputmode="decimal"><label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="crel" checked> Released</label><input id="cnote" placeholder="Notes: lure, depth, birds..."><button class="btn pri" id="csave">Save catch</button><button class="btn" id="ccancel">Cancel</button></div>
+    <div class="cform" id="cform"><input id="cpos" placeholder="Position, e.g. 37 36.363 S 177 19.661 E"><input id="ctime" type="datetime-local"><select id="csp"></select><input id="cnum" type="number" min="1" max="20" value="1" title="How many" style="flex:0 0 70px"><input id="ckg" placeholder="Weight kg (optional)" inputmode="decimal"><label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="crel" checked> Released</label><input id="cnote" placeholder="Notes: lure, depth, birds..."><button class="btn pri" id="csave">Save catch</button><button class="btn" id="ccancel">Cancel</button></div>
     <div id="learnbox"></div><div id="cstats"></div><div id="clist"></div>
     <h3>Data inputs</h3><div id="sources"></div>
     <h3>Waypoints and trolling courses</h3>
@@ -1141,6 +1141,7 @@ function allMarks(){return CHARTED.map(([n,la,lo,src])=>({n,la,lo,src,ch:1})).co
 function parsePos(t){t=t.trim().toUpperCase().replace(/[°'′"]/g," ");
   const dec=t.match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/);if(dec){let la=+dec[1],lo=+dec[2];if(la>0&&la<90&&lo>170)la=-la;return[la,lo];}
   const m=t.match(/(\d+)\s+(\d+(?:\.\d+)?)\s*([NS])\D*?(\d+)\s+(\d+(?:\.\d+)?)\s*([EW])/);if(m){const la=(+m[1]+ +m[2]/60)*(m[3]==="S"?-1:1),lo=(+m[4]+ +m[5]/60)*(m[6]==="W"?-1:1);return[la,lo];}
+  const m2=t.match(/([NS])\s*(\d+)\s+(\d+(?:\.\d+)?)\D*?([EW])\s*(\d+)\s+(\d+(?:\.\d+)?)/);if(m2)return[(+m2[2]+ +m2[3]/60)*(m2[1]==="S"?-1:1),(+m2[5]+ +m2[6]/60)*(m2[4]==="W"?-1:1)];
   return null;}
 function renderMarkList(){const L=allMarks();
   $("marklist").innerHTML=L.map(m=>`<div class="mk"><span class="sw" style="${m.ap?"border:2px solid #ffb547;background:transparent":`background:${m.ch?"#ffd34d":"#ff5fc8"}`}"></span><span><span class="nm" data-la="${m.la}" data-lo="${m.lo}">${m.n}</span>${m.ap?'<span class="aptag">approx</span>':""}${m.src?`<br><span class="src2">${m.src}</span>`:""}</span><span class="ll">${fmtLL(m.la,m.lo)}</span>${m.ch?"":`<button class="del" data-i="${m.i}" title="Delete">×</button>`}</div>`).join("");
@@ -1167,17 +1168,24 @@ let pendingCatch=null;
 function catchPos(){if(MAP.me&&Date.now()-MAP.me.t<180e3)return{la:MAP.me.lat,lo:MAP.me.lon,how:"GPS"};if(MAP.probe)return{la:MAP.probe.lat,lo:MAP.probe.lon,how:"map tap"};return null;}
 $("fishon").onclick=()=>{const p=catchPos();
   if(!p){$("chint").innerHTML="<b style='color:#ff8a70'>Where are you?</b> Turn on ◎ for GPS, or tap the map where you hooked up, then press Fish on again.";if($("tab-map").hidden)document.querySelector('.tab[data-t="map"]').click();return;}
-  pendingCatch={...p,t:new Date().toISOString()};$("csp").value=state.sp;$("ckg").value="";$("cnote").value="";$("cform").style.display="flex";
+  openCatchForm(p);
   const r=reserveAt(p.la,p.lo);$("chint").innerHTML=`Position from ${p.how}: ${fmtLL(p.la,p.lo)}${r?`<br><b style="color:#ff6b81">⛔ This is inside ${r.name}. Fishing isn't allowed here.</b>`:""}`;};
 $("ccancel").onclick=()=>{pendingCatch=null;$("cform").style.display="none";};
+const localDT=t=>{const d=new Date(t);return new Date(d-d.getTimezoneOffset()*6e4).toISOString().slice(0,16);};
+function openCatchForm(p){pendingCatch={how:p?p.how:"typed"};$("cpos").value=p?`${p.la.toFixed(5)}, ${p.lo.toFixed(5)}`:"";$("ctime").value=localDT(Date.now());$("cnum").value=1;
+  $("csp").value=state.sp;$("ckg").value="";$("cnote").value="";$("cform").style.display="flex";}
+$("pastcatch").onclick=()=>{openCatchForm(null);$("chint").textContent="Type or paste the position (degrees and minutes, or decimal), set the date and time, and how many fish.";$("cpos").focus();};
 function solunarAt(t){const off=nzOffsetMs(t),day0=Math.floor((t+off)/864e5)*864e5-off;
   const ev=solunar(day0,BOP.lat,BOP.lon).filter(e=>e.type!=="Sun");const hit=ev.find(e=>Math.abs(t-e.t)<=e.dur*30e3);return hit?hit.type:"Outside";}
-$("csave").onclick=()=>{const p=pendingCatch;if(!p)return;const t=Date.parse(p.t),c=MAP.ready?conditionsAt(p.la,p.lo):{},ph=moonPhase(t),age=ph*29.53;
+$("csave").onclick=()=>{if(!pendingCatch)return;const pos=parsePos($("cpos").value);
+  if(!pos){$("chint").innerHTML="<b style='color:#ff8a70'>Couldn't read that position.</b> Try 37 36.363 S 177 19.661 E or -37.606, 177.328.";return;}
+  const p={...pendingCatch,la:pos[0],lo:pos[1],t:new Date($("ctime").value||Date.now()).toISOString()},count=Math.max(1,Math.min(20,parseInt($("cnum").value)||1));
+  const t=Date.parse(p.t),c=MAP.ready?conditionsAt(p.la,p.lo):{},ph=moonPhase(t),age=ph*29.53;
   let tide=null;if(TIDES){const port=TIDES.ports.map(q=>({q,d:hav(q.lat,q.lon,p.la,p.lo)})).sort((a,b)=>a.d-b.d)[0].q,st=tideState(port,t);if(st)tide={port:port.name,rising:st.rising,txt:st.txt};}
   const sp=$("csp").value,lf=MAP.ready?catchFeats(p.la,p.lo):{};
-  CATCHES.unshift({t:p.t,la:p.la,lo:p.lo,how:p.how,sp,spn:sp.startsWith("x:")?sp.slice(2):SPECIES[sp].name,mur:c.sst??null,kg:parseFloat($("ckg").value)||null,rel:$("crel").checked,note:$("cnote").value.trim(),
-    f:lf.f||null,r:lf.r||null,sst:c.hima??c.sst??null,anom:c.anom??null,dep:c.dep??null,front:c.front??null,chl:c.chl??null,moon:phaseName(ph),age:+age.toFixed(1),sol:solunarAt(t),tide});
-  saveCatches();$("cform").style.display="none";pendingCatch=null;$("chint").textContent="Saved. Tight lines.";renderCatches();learnPanel();mapUpdate();};
+  const rec={t:p.t,la:p.la,lo:p.lo,how:p.how,sp,spn:sp.startsWith("x:")?sp.slice(2):SPECIES[sp].name,mur:c.sst??null,kg:parseFloat($("ckg").value)||null,rel:$("crel").checked,note:$("cnote").value.trim(),
+    f:lf.f||null,r:lf.r||null,sst:c.hima??c.sst??null,anom:c.anom??null,dep:c.dep??null,front:c.front??null,chl:c.chl??null,moon:phaseName(ph),age:+age.toFixed(1),sol:solunarAt(t),tide};for(let k=0;k<count;k++)CATCHES.unshift({...rec});
+  saveCatches();$("cform").style.display="none";pendingCatch=null;$("chint").textContent=`Saved ${count>1?count+" catches":"catch"}. Tight lines.`+(Date.now()-t>2*864e5?" (Conditions are from the latest satellite data, so older catches are approximate.)":"");renderCatches();learnPanel();mapUpdate();};
 const med=a=>{const b=a.filter(x=>x!=null).sort((x,y)=>x-y);return b.length?b[Math.floor(b.length/2)]:null;};
 function renderCatches(){const C=CATCHES;
   if(!C.length){$("cstats").innerHTML="";$("clist").innerHTML="";return;}
