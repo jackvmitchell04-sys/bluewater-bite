@@ -791,7 +791,7 @@ function layerDefs(A){const L=A.sst.length-1,d=Math.min(MAP.day,L);
     hima:A.hima?{f:A.hima,col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:"Hourly SST, Himawari-9 (cloud gaps dark)"}:null,
     change:{f:A.change,col:v=>ramp(DIV,(v+1.5)/3),pal:t=>ramp(DIV,t),lg:["-1.5°C","+1.5°C"],title:"5-day SST change"},
     chart:MAP.BF&&!A.sample?{f:A.depth,col:v=>chartCol(v)||[214,204,166],pal:t=>chartCol(1+t*1999)||[0,0,0],lg:["0 m","2000 m+"],title:"Chart: depth and seafloor relief",note:MAP.BF.label+"."}:null,
-    fc:A.fcDelta?{f:fcField(A,MAP.fcDay),col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:`SST forecast for ${fmtDate(A.fcDates[MAP.fcDay])}`,note:"Today's 1 km satellite SST moved forward by the ocean model's forecast change."}:null};}
+    fc:A.fcDelta?{f:fcField(A,MAP.fcDay),col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:`SST forecast for ${fmtDate(A.fcDates[MAP.fcDay])}`,note:"Today's 1 km satellite SST plus the Copernicus ocean model's forecast change for that day. Good for which way the water is trending (warming, cooling, warm water pushing in); it can't move individual breaks precisely. Tap the map to read the forecast temperature; it updates as you change day."}:null};}
 
 function contours(f,level){const seg=[];
   for(let j=0;j<NY-1;j++)for(let i=0;i<NX-1;i++){const a=f[ix(i,j)],b=f[ix(i+1,j)],c=f[ix(i+1,j+1)],d=f[ix(i,j+1)];if(isNaN(a+b+c+d))continue;
@@ -1056,7 +1056,7 @@ function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
     near&&near.d<1.5?`<span style="color:${near.m.ch?"#ffd34d":"#ff5fc8"};font-weight:700">${near.m.ap?"≈ ":""}${near.m.n}${near.d>.2?` (${near.d.toFixed(1)} nm)`:""}</span>${near.m.ap?'<br><span class="tipm">Approximate position</span>':""}`:"",`<b>${fmtLL(la,lo)}</b>`,`<span class="tipdd">${la.toFixed(5)}, ${lo.toFixed(5)}</span>`];
   if(c.land)rows.push("Land");
   else{rows.push(`<span class="tipT">${c.sst==null?"n/a":c.sst.toFixed(1)+"°C"}</span> <span class="tipm">${c.date||""}</span>`);
-    if(c.fc!=null)rows.push(`Forecast ${MAP.A.fcDates[MAP.fcDay]}: ${c.fc.toFixed(1)}°C`);
+    if(c.fc!=null){const d=c.sst!=null?c.fc-c.sst:null;rows.unshift(`<b>Forecast ${fmtDate(MAP.A.fcDates[MAP.fcDay])}: ${c.fc.toFixed(1)}°C</b>${d!=null?(Math.abs(d)<.05?" (same as today)":` (${d>0?"+":""}${d.toFixed(1)}°C vs today)`):""}`);}
     if(c.hima!=null)rows.push(`Hourly SST ${c.hima.toFixed(1)}°C${c.sst!=null&&c.hima-c.sst>.8?' <span class="tipm">(skin warmed by afternoon sun on a calm day; the water below is closer to the daily figure)</span>':""}`);
     if(c.dep!=null)rows.push(`Depth ${Math.round(c.dep)} m`);
     if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³${c.chlAge!=null?` <span class="tipm">(${c.chlAge<.5?"seen today":`seen ${Math.round(c.chlAge)} d ago, moved with the current`})</span>`:""}`);
@@ -1120,7 +1120,7 @@ function fcField(A,k){A.fcF=A.fcF||{};if(A.fcF[k])return A.fcF[k];const L=A.sst.
   for(let n=0;n<NN;n++)if(!isNaN(base[n]))f[n]=base[n]+(isNaN(d[n])?0:d[n]);return A.fcF[k]=f;}
 function renderFcDays(){const el=$("fcdays"),A=MAP.A;if(MAP.layer!=="fc"||!A||!A.fcDates){el.hidden=true;return;}el.hidden=false;
   el.innerHTML=A.fcDates.map((d,k)=>k?`<div class="day ${k===MAP.fcDay?"on":""}" data-k="${k}">${k===1?"Tomorrow":fmtDate(d)}</div>`:"").join("");
-  el.querySelectorAll(".day").forEach(b=>b.onclick=()=>{MAP.fcDay=+b.dataset.k;renderFcDays();draw();});}
+  el.querySelectorAll(".day").forEach(b=>b.onclick=()=>{MAP.fcDay=+b.dataset.k;renderFcDays();draw();if(MAP.probe)probeAt(MAP.probe.lat,MAP.probe.lon);});}
 
 function wpShown(){return MAP.wpReg==null?MAP.wps:MAP.wps.filter(w=>w.reg===MAP.wpReg);}
 function wpCards(){
