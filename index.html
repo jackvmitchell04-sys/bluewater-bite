@@ -198,16 +198,16 @@ ol.plan b.stop{color:var(--accent)}ol.plan{margin:10px 0 6px;padding-left:22px;l
 <script>
 /* ---------------- Config ---------------- */
 const SPECIES = {
-  stripedmarlin:{name:"Striped Marlin",      min:18.5, max:23},
-  bluemarlin:   {name:"Blue Marlin",         min:20.5, max:26},
-  yellowfin:    {name:"Yellowfin Tuna",      min:18.5, max:24},
-  bigeye:       {name:"Bigeye Tuna",         min:17, max:23},
-  skipjack:     {name:"Skipjack Tuna",       min:18, max:25},
-  mahi:         {name:"Mahi-Mahi",           min:20, max:26},
-  kingfish:     {name:"Yellowtail Kingfish", min:16, max:22},
-  broadbill:    {name:"Broadbill Swordfish", min:15, max:21},
-  mako:         {name:"Mako Shark",          min:15, max:21},
-  albacore:     {name:"Albacore",            min:15, max:19.5}
+  stripedmarlin:{name:"Striped Marlin", min:18.5, max:25, lo:20, hi:24},
+  bluemarlin:{name:"Blue Marlin", min:20.5, max:28, lo:22, hi:27},
+  yellowfin:{name:"Yellowfin Tuna", min:18.5, max:28, lo:20, hi:26},
+  bigeye:{name:"Bigeye Tuna", min:17, max:24, lo:17, hi:22},
+  skipjack:{name:"Skipjack Tuna", min:18, max:28, lo:20, hi:27},
+  mahi:{name:"Mahi-Mahi", min:20, max:28, lo:21, hi:27},
+  kingfish:{name:"Yellowtail Kingfish", min:16, max:23, lo:17, hi:21},
+  broadbill:{name:"Broadbill Swordfish", min:15, max:22, lo:16, hi:20},
+  mako:{name:"Mako Shark", min:15, max:22, lo:16, hi:20},
+  albacore:{name:"Albacore", min:15, max:20.5, lo:16, hi:19}
 };
 const HOTSPOTS = [
   {id:"needles",  name:"The Needles",            region:"Great Barrier Island",        lat:-36.05, lon:175.50},
@@ -603,7 +603,19 @@ function analyse(D){
   A.frontDist=distKm(A.cc[L]);
   A.persist=new Float32Array(NN);for(let n=0;n<NN;n++){let c=0;for(const f of A.fr)if(f.g[n]>0.06)c++;A.persist[n]=c/A.fr.length;}
   A.change=new Float32Array(NN);for(let n=0;n<NN;n++)A.change[n]=D.sst[L][n]-D.sst[0][n];
-  if(D.chl){A.chlLog=D.chl.map(c=>c.map(v=>v>0?Math.log10(v):NaN));const cl=A.chlLog[A.chlLog.length-1];A.chlG=gradient(cl).g;A.chlEdge=cayulaCornillon(smooth(cl),{minDT:0.08});A.chlDist=distKm(A.chlEdge);}
+  if(D.chl){A.chlLog=D.chl.map(c=>c.map(v=>v>0?Math.log10(v):NaN));const cl=A.chlLog[A.chlLog.length-1];A.chlG=gradient(cl).g;A.chlEdge=cayulaCornillon(smooth(cl),{minDT:0.08});
+    A.chlDist=distKm(A.chlEdge);
+    // oceanic colour fronts (blue meets green offshore, ~0.1-0.8 mg/m3) hold pelagics; murky coastal and river-plume edges don't
+    const ocean=new Uint8Array(NN),cs=smooth(cl,1);for(let n=0;n<NN;n++)if(A.chlEdge[n]&&cs[n]>-1&&cs[n]<Math.log10(.8))ocean[n]=1;A.chlDistO=distKm(ocean);
+    // how many days this week the water here sat on a colour edge: bait needs days to build on a new edge
+    const thr=.08;A.chlPersist=new Float32Array(NN);const nf=A.chlLog.length;
+    for(const fr of A.chlLog){const g=gradient(smooth(fr,1)).g;for(let n=0;n<NN;n++)if(g[n]>thr/4)A.chlPersist[n]+=1/nf;}   // log10 chl per km
+    A.chlPersist=smooth(A.chlPersist,3);}
+  // temperature step: the total change across the front (warmest minus coolest water within ~5 km), not just its sharpness
+  {const T=D.sst[L],r=Math.max(1,Math.round(5/(AREA.res*KM))),mx=new Float32Array(NN).fill(NaN),mn=new Float32Array(NN).fill(NaN),tx=new Float32Array(NN),tn=new Float32Array(NN);
+    for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){let a=-99,b=99;for(let q=Math.max(0,i-r);q<=Math.min(NX-1,i+r);q++){const v=T[ix(q,j)];if(!isNaN(v)){if(v>a)a=v;if(v<b)b=v;}}tx[ix(i,j)]=a;tn[ix(i,j)]=b;}
+    for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){let a=-99,b=99;for(let q=Math.max(0,j-r);q<=Math.min(NY-1,j+r);q++){const n=ix(i,q);if(tx[n]>a)a=tx[n];if(tn[n]<b)b=tn[n];}const n=ix(i,j);if(a>-99&&b<99){mx[n]=a;mn[n]=b;}}
+    A.tStep=new Float32Array(NN);for(let n=0;n<NN;n++)A.tStep[n]=isNaN(mx[n])?0:mx[n]-mn[n];}
   if(D.mu){A.geo=flowFromUV(D.mu,D.mv,D.eta);A.slaL=D.eta;
     const cv=smooth(A.geo.div.map(x=>-x),2),ab=[...cv].filter(x=>!isNaN(x)).map(Math.abs).sort((a,b)=>a-b),p95=ab[Math.floor(ab.length*.95)]||1;A.convN=cv.map(x=>x/p95);A.convAbs=cv.map(x=>x/3e-6);   // absolute: 3e-6 /s convergence is a strong surface convergence for a 1/12 deg model
     A.speed=new Float32Array(NN);for(let n=0;n<NN;n++)A.speed[n]=Math.hypot(D.mu[n],D.mv[n])*1.944;
@@ -629,9 +641,19 @@ function analyse(D){
    Sorted strongest first, they stack: one strong feature on its own = 0.3, two together = 0.6, three = 0.85, four or more = 1.
    A feature hidden by cloud is simply unknown: it neither helps nor counts against the zone. */
 const STACK=[.30,.30,.25,.15];
+// graded temperature: full marks in the ideal band (where tagged fish spend most of their time), 0.6 at the edge of the
+// range they're still caught in, fading to nothing 2 C beyond it
+function tempSuit(sp,t){if(t>=sp.lo&&t<=sp.hi)return 1;
+  if(t>=sp.min&&t<sp.lo)return .6+.4*(t-sp.min)/(sp.lo-sp.min||1);if(t>sp.hi&&t<=sp.max)return .6+.4*(sp.max-t)/(sp.max-sp.hi||1);
+  const o=t<sp.min?sp.min-t:t-sp.max;return Math.max(0,.6*(1-o/2));}
 function featuresAt(A,spKey,n){const L=A.sst.length-1,f={};
-  if(A.frontDist&&!isNaN(A.frontDist[n]))f.brk=Math.exp(-A.frontDist[n]/4)*(.55+.25*Math.min(1,(A.fr[L].g[n]||0)/0.15)+.2*Math.min(1,(A.ccFreqS[n]||0)*2.5));
-  if(A.chlDist&&!isNaN(A.chlDist[n])){const age=A.chlAge&&!isNaN(A.chlAge[n])?A.chlAge[n]:0;if(age<6)f.col=Math.exp(-A.chlDist[n]/4)*Math.max(.4,1-age/8);}
+  // break: close to a front, with a real temperature step across it (1 C+ = full; Bay fronts are usually 0.3-1 C), sharp, and held through the week
+  if(A.frontDist&&!isNaN(A.frontDist[n]))f.brk=Math.exp(-A.frontDist[n]/4)*(.35+.25*Math.min(1,(A.tStep?A.tStep[n]:0)/1.0)+.15*Math.min(1,(A.fr[L].g[n]||0)/0.15)+.25*Math.min(1,(A.ccFreqS[n]||0)*2.5));
+  // colour: close to an OCEANIC colour edge, better on the clear blue side for warm-water species, and better if the edge
+  // has been there several days (bait builds up); older satellite views count less
+  if(A.chlDistO&&!isNaN(A.chlDistO[n])){const age=A.chlAge&&!isNaN(A.chlAge[n])?A.chlAge[n]:0;if(age<6){
+    const c=A.chl?A.chl[A.chl.length-1][n]:NaN,side=WARM_SP[spKey]&&!isNaN(c)?(c<=.35?1:.75):1,pers=A.chlPersist?Math.min(1,A.chlPersist[n]*1.5):.5;
+    f.col=Math.exp(-A.chlDistO[n]/4)*Math.max(.4,1-age/8)*side*(.6+.4*pers);}}
   let cur=0;if(A.convAbs&&!isNaN(A.convAbs[n]))cur=Math.max(cur,Math.min(1,A.convAbs[n]));
   if(A.shear&&!isNaN(A.shear[n]))cur=Math.max(cur,Math.min(1,A.shear[n]/0.03));   // model currents are smooth: 0.03 kn per km is a sharp edge (top 1%)
   if(A.convAbs||A.shear)f.cur=cur;
@@ -643,7 +665,7 @@ function stackScore(f){const v=Object.values(f).sort((a,b)=>b-a);let s=0,p=1;for
 function scoreField(A,spKey){
   const sp=SPECIES[spKey],dp=DEPTH_PREF[spKey],L=A.sst.length-1,s=new Float32Array(NN).fill(NaN);
   for(let n=0;n<NN;n++){const t=A.sst[L][n],z=A.depth[n];if(A.land[n]||isNaN(t)||!(z>8))continue;
-    const o=t<sp.min?sp.min-t:t>sp.max?t-sp.max:0,temp=Math.max(0,1-o/2.5);
+    const temp=tempSuit(sp,t);
     const depth=spKey!=="kingfish"?(z>=PELAGIC_MIN_DEPTH?1:0):z<dp[0]?.5+.5*z/dp[0]:z>dp[1]?Math.max(.4,1-(z-dp[1])/dp[1]):1;   // depth only matters for kingfish (reef fish); pelagics follow the water, not the bottom
     const clean=WARM_SP[spKey]&&A.D_kd&&!isNaN(A.D_kd[n])?.8+.2*Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):1;
     s[n]=Math.min(1,stackScore(featuresAt(A,spKey,n))*(.15+.85*temp)*depth*clean);}
