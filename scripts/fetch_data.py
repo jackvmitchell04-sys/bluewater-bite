@@ -33,7 +33,9 @@ def _get_deadline(url, params=None, timeout=60, **kw):
     t0 = time.monotonic()
     try:
         # read timeout can be long: Open-Meteo multi-point requests take a while to compute before the first byte
-        r = _rq_get(url, params=params, timeout=(20, min(limit, 180)), stream=True, **kw)
+        # Open-Meteo computes multi-point requests before sending a byte: give it one plain long timeout
+        to = min(limit, 180) if "open-meteo" in host else (20, min(limit, 180))
+        r = _rq_get(url, params=params, timeout=to, stream=True, **kw)
     except (_rq.ConnectTimeout, _rq.ConnectionError) as e:
         if not isinstance(e, _rq.ReadTimeout):
             _DEAD[host] = _DEAD.get(host, 0) + 1                      # only a failure to connect marks a host as down
