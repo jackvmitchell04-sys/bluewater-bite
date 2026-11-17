@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install xarray netCDF4 siphon numpy requests pillow tifffile imagecodecs
-      - run: timeout 20m python scripts/fetch_data.py himawari ocean alerts sharp truecolour || echo "ended early"
+      - run: timeout 20m python scripts/fetch_data.py himawari ocean alerts sharp truecolour openmeteo_catchup || echo "ended early"
       - name: Save
         if: always()
         run: |

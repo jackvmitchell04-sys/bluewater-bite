@@ -28,13 +28,15 @@ def _get_deadline(url, params=None, timeout=60, **kw):
     A host that fails to connect twice is skipped for the rest of the run, so the mirrors take over at once."""
     limit = timeout if isinstance(timeout, (int, float)) else 120
     host = url.split("/")[2]
-    if _DEAD.get(host, 0) >= 2:
+    if _DEAD.get(host, 0) >= 2 and "open-meteo" not in host:
         raise _rq.ConnectionError(f"{host} skipped: not answering this run")
     t0 = time.monotonic()
     try:
-        r = _rq_get(url, params=params, timeout=(10, min(limit, 60)), stream=True, **kw)
-    except (_rq.ConnectionError, _rq.Timeout):
-        _DEAD[host] = _DEAD.get(host, 0) + 1
+        # read timeout can be long: Open-Meteo multi-point requests take a while to compute before the first byte
+        r = _rq_get(url, params=params, timeout=(20, min(limit, 180)), stream=True, **kw)
+    except (_rq.ConnectTimeout, _rq.ConnectionError) as e:
+        if not isinstance(e, _rq.ReadTimeout):
+            _DEAD[host] = _DEAD.get(host, 0) + 1                      # only a failure to connect marks a host as down
         raise
     buf = []
     for chunk in r.iter_content(1 << 16):
@@ -1383,12 +1385,24 @@ def truecolour():
     log("truecolour: mosaic from " + ", ".join(f"{u['sat']} {u['day']} {u['share']:.0%}" for u in used))
 
 
+def openmeteo_catchup():
+    """Hourly run: if the twice-daily Open-Meteo files missed their update (server slow or throttled), fetch them now."""
+    for name, job in (("model.json", model_grid), ("forecast.json", forecast)):
+        try:
+            age = (dt.datetime.utcnow() - dt.datetime.strptime(json.load(open(os.path.join(OUT, name)))["updated"][:16], "%Y-%m-%dT%H:%M")).total_seconds() / 3600
+        except Exception:
+            age = 99
+        if age > 8:
+            log(f"catch-up: {name} is {age:.0f} h old, refreshing")
+            job()
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     ok = 0
     # most important first; slow model downloads are skipped if the morning budget runs out
     only = set(sys.argv[1:])
-    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, sharp, truecolour, reserves, dumping, currents, tides, model_grid, forecast):
+    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, sharp, truecolour, reserves, dumping, currents, tides, model_grid, forecast, openmeteo_catchup):
         if only and job.__name__ not in only:
             continue
         if job in (model_grid, forecast) and time.time() - T0 > 25 * 60:
