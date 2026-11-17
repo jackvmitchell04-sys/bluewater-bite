@@ -603,7 +603,8 @@ function analyse(D){
   if(D.chl){A.chlLog=D.chl.map(c=>c.map(v=>v>0?Math.log10(v):NaN));const cl=A.chlLog[A.chlLog.length-1];A.chlG=gradient(cl).g;A.chlEdge=cayulaCornillon(smooth(cl),{minDT:0.08});A.chlDist=distKm(A.chlEdge);}
   if(D.mu){A.geo=flowFromUV(D.mu,D.mv,D.eta);A.slaL=D.eta;
     const cv=smooth(A.geo.div.map(x=>-x),2),ab=[...cv].filter(x=>!isNaN(x)).map(Math.abs).sort((a,b)=>a-b),p95=ab[Math.floor(ab.length*.95)]||1;A.convN=cv.map(x=>x/p95);A.convAbs=cv.map(x=>x/3e-6);   // absolute: 3e-6 /s convergence is a strong surface convergence for a 1/12 deg model
-    A.speed=new Float32Array(NN);for(let n=0;n<NN;n++)A.speed[n]=Math.hypot(D.mu[n],D.mv[n])*1.944;}
+    A.speed=new Float32Array(NN);for(let n=0;n<NN;n++)A.speed[n]=Math.hypot(D.mu[n],D.mv[n])*1.944;
+    A.shear=gradient(smooth(A.speed,1)).g;}   // knots per km: fast water beside slow water
   else if(D.sla){A.geo=geostrophy(D.sla[D.sla.length-1]);A.slaL=D.sla[D.sla.length-1];}
   if(A.geo){
     // rotation-dominated cores (Okubo-Weiss < 0); southern hemisphere: anticlockwise (vorticity > 0) = warm-core, clockwise = cold-core.
@@ -618,24 +619,31 @@ function analyse(D){
   const dep=D.depth.map(v=>isNaN(v)?NaN:Math.log10(Math.max(v,1)));A.slope=gradient(dep).g;A.bg=gradient(D.depth);
   return A;}
 
+/* Hotspot score: how many fish-holding features LINE UP in the same zone, not a weighted sum.
+   Must-haves multiply: water temperature in the species' range, a suitable depth (and clean water for warm-water species).
+   Attractors, each 0..1 and fading over a few km so "next to" counts: temperature break, chlorophyll/colour edge,
+   current edge (converging current, or fast water running beside slow water), eddy rim, steep structure.
+   Sorted strongest first, they stack: one strong feature on its own = 0.3, two together = 0.6, three = 0.85, four or more = 1.
+   A feature hidden by cloud is simply unknown: it neither helps nor counts against the zone. */
+const STACK=[.30,.30,.25,.15];
+function featuresAt(A,spKey,n){const L=A.sst.length-1,f={};
+  if(A.frontDist&&!isNaN(A.frontDist[n]))f.brk=Math.exp(-A.frontDist[n]/4)*(.55+.25*Math.min(1,(A.fr[L].g[n]||0)/0.15)+.2*Math.min(1,(A.ccFreqS[n]||0)*2.5));
+  if(A.chlDist&&!isNaN(A.chlDist[n])){const age=A.chlAge&&!isNaN(A.chlAge[n])?A.chlAge[n]:0;if(age<6)f.col=Math.exp(-A.chlDist[n]/4)*Math.max(.4,1-age/8);}
+  let cur=0;if(A.convAbs&&!isNaN(A.convAbs[n]))cur=Math.max(cur,Math.min(1,A.convAbs[n]));
+  if(A.shear&&!isNaN(A.shear[n]))cur=Math.max(cur,Math.min(1,A.shear[n]/0.03));   // model currents are smooth: 0.03 kn per km is a sharp edge (top 1%)
+  if(A.convAbs||A.shear)f.cur=cur;
+  if(A.geo&&!isNaN(A.geo.slope[n])){const wr=A.warmRim?Math.exp(-A.warmRim[n]/6):0,cr=A.coldRim?Math.exp(-A.coldRim[n]/6):0,hiSide=!A.slaA||isNaN(A.slaA[n])||A.slaA[n]>-0.01;
+    f.edd=Math.max(Math.min(1,A.geo.slope[n]/4e-6)*(WARM_SP[spKey]&&!hiSide?.5:.8),(WARM_SP[spKey]?1:.7)*wr,.7*cr);}
+  if(A.slope&&!isNaN(A.slope[n]))f.str=Math.min(1,A.slope[n]/0.08);
+  return f;}
+function stackScore(f){const v=Object.values(f).sort((a,b)=>b-a);let s=0,p=1;for(let k=0;k<STACK.length&&k<v.length;k++){p*=v[k];s+=STACK[k]*p;}return s;}
 function scoreField(A,spKey){
-  const sp=SPECIES[spKey],dp=DEPTH_PREF[spKey],L=A.sst.length-1,s=new Float32Array(NN).fill(NaN),comp={};
+  const sp=SPECIES[spKey],dp=DEPTH_PREF[spKey],L=A.sst.length-1,s=new Float32Array(NN).fill(NaN);
   for(let n=0;n<NN;n++){const t=A.sst[L][n],z=A.depth[n];if(A.land[n]||isNaN(t)||!(z>8))continue;
     const o=t<sp.min?sp.min-t:t>sp.max?t-sp.max:0,temp=Math.max(0,1-o/2.5);
-    const parts=[[.22,Math.exp(-A.frontDist[n]/4)],[.10,Math.min(1,A.ccFreqS[n]*2.5)],[.10,Math.min(1,(A.fr[L].g[n]||0)/0.15)],
-      [.15,z<dp[0]?Math.max(.1,z/dp[0]):z>dp[1]?Math.max(.4,1-(z-dp[1])/dp[1]):1],[.10,Math.min(1,(A.slope[n]||0)/0.08)]];
-    if(A.chlDist)parts.push([.10*(A.chlAge&&!isNaN(A.chlAge[n])?Math.max(0,1-A.chlAge[n]/6):1),Math.exp(-A.chlDist[n]/5)]);
-    if(A.geo&&!isNaN(A.geo.slope[n])){
-      // strength of the sea-level edge (current along it), counted fully on the warm side; plus closeness to an eddy rim:
-      // warm-core rims best for warm-water species, cold-core rims (upwelled nutrients) count for something too
-      const hiSide=!A.slaA||isNaN(A.slaA[n])||A.slaA[n]>-0.01,edge=Math.min(1,A.geo.slope[n]/4e-6)*(WARM_SP[spKey]&&!hiSide?.5:1);
-      const wr=A.warmRim?Math.exp(-A.warmRim[n]/6):0,cr=A.coldRim?Math.exp(-A.coldRim[n]/6):0;
-      parts.push([.15,Math.max(edge,(WARM_SP[spKey]?.9:.6)*wr,.55*cr)]);}
-    if(A.convAbs&&!isNaN(A.convAbs[n]))parts.push([.08,Math.max(0,Math.min(1,A.convAbs[n]))]);
-    if(A.D_kd&&!isNaN(A.D_kd[n]))parts.push([.05*(A.kdAge&&!isNaN(A.kdAge[n])?Math.max(0,1-A.kdAge[n]/6):1),WARM_SP[spKey]?Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):.6]);
-    let ws=0,v=0;for(const[w,x]of parts){ws+=w;v+=w*x;}v/=ws;
-    const mod=.2+.8*temp;   // the actual temperature vs the species' range; the anomaly vs normal isn't scored
-    s[n]=Math.min(1,v*mod);}
+    const depth=z<dp[0]?Math.max(.1,z/dp[0]):z>dp[1]?Math.max(.4,1-(z-dp[1])/dp[1]):1;
+    const clean=WARM_SP[spKey]&&A.D_kd&&!isNaN(A.D_kd[n])?.8+.2*Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):1;
+    s[n]=Math.min(1,stackScore(featuresAt(A,spKey,n))*(.15+.85*temp)*depth*clean);}
   const M=LEARN_ON&&typeof learnModel==="function"?learnModel(spKey):null;
   if(M)for(let n=0;n<NN;n++)if(!isNaN(s[n]))s[n]=Math.min(1,s[n]*learnedFactor(M,A,n));
   return smooth(s);}
@@ -706,6 +714,7 @@ function waypoints(A,score,n=WP_N){
     if(A.warmRim&&A.warmRim[p.k]<8)why.push("on the rim of a warm-core eddy");else if(A.coldRim&&A.coldRim[p.k]<8)why.push("on the rim of a cold-core eddy (upwelled nutrients)");
     if(A.chlDist&&A.chlDist[p.k]<4)why.push("on a chlorophyll edge");
     if(A.convN&&A.convN[p.k]>.5)why.push("currents converging (bait and weed lines)");else if(A.convN&&A.convN[p.k]<-.5)why.push("upwelling edge");
+    else if(A.shear&&A.shear[p.k]>.02)why.push("fast current running beside slow water");
     if(A.slope&&A.slope[p.k]>.05)why.push("steep slope / canyon wall");
     return{n:w+1,lat:la,lon:lo,score:Math.round(score[p.k]*100),sst:A.sst[L][p.k],brk:(A.fr[L].g[p.k]||0)*2,depth:A.depth[p.k],
       chl:A.chl?A.chl[A.chl.length-1][p.k]:null,change:A.change[p.k],tag:why.join(", "),line,course,ends:[course[0],course[course.length-1]],head:info.h,along:info.along,warm:info.warm,len,mode,
