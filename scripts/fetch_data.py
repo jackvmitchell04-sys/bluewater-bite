@@ -34,7 +34,7 @@ def _get_deadline(url, params=None, timeout=60, **kw):
     try:
         # read timeout can be long: Open-Meteo multi-point requests take a while to compute before the first byte
         # Open-Meteo computes multi-point requests before sending a byte: give it one plain long timeout
-        to = min(limit, 180) if "open-meteo" in host else (20, min(limit, 180))
+        to = min(limit, 60) if "open-meteo" in host else (20, min(limit, 180))   # its retry is usually instant
         r = _rq_get(url, params=params, timeout=to, stream=True, **kw)
     except (_rq.ConnectTimeout, _rq.ConnectionError) as e:
         if not isinstance(e, _rq.ReadTimeout):
