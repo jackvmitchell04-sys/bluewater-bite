@@ -610,7 +610,11 @@ function analyse(D){
     // Raw model sea level includes the regional tilt of the current, so it can't decide the type; the spin can.
     A.eddy=new Int8Array(NN);for(let n=0;n<NN;n++){if(A.geo.W[n]<-0.2*A.geo.sd&&!isNaN(A.geo.zeta[n]))A.eddy[n]=A.geo.zeta[n]>0?1:-1;}
     {const big=smooth(smooth(smooth(A.slaL,6),6),6);A.slaA=A.slaL.map((v,n)=>v-big[n]);}   // local sea-level bump, regional tilt removed
-    eddyComponents(A);const warmCore=new Uint8Array(NN);for(let n=0;n<NN;n++)warmCore[n]=A.eddy[n]===1?1:0;A.warmDist=distKm(warmCore);}
+    eddyComponents(A);
+    // fish work eddy RIMS (fast current, breaks, concentrated bait), not the empty middle: distance to each eddy's edge
+    const rim=sg=>{const m=new Uint8Array(NN);for(let n=0;n<NN;n++){if(A.eddy[n]!==sg)continue;const i=n%NX,j=(n-i)/NX;
+      for(const[a,b]of[[1,0],[-1,0],[0,1],[0,-1]]){const x=i+a,y=j+b;if(x<0||y<0||x>=NX||y>=NY)continue;if(A.eddy[ix(x,y)]!==sg){m[n]=1;break;}}}return distKm(m);};
+    A.warmRim=rim(1);A.coldRim=rim(-1);A.warmDist=A.warmRim;}
   const dep=D.depth.map(v=>isNaN(v)?NaN:Math.log10(Math.max(v,1)));A.slope=gradient(dep).g;A.bg=gradient(D.depth);
   return A;}
 
@@ -621,7 +625,12 @@ function scoreField(A,spKey){
     const parts=[[.22,Math.exp(-A.frontDist[n]/4)],[.10,Math.min(1,A.ccFreqS[n]*2.5)],[.10,Math.min(1,(A.fr[L].g[n]||0)/0.15)],
       [.15,z<dp[0]?Math.max(.1,z/dp[0]):z>dp[1]?Math.max(.4,1-(z-dp[1])/dp[1]):1],[.10,Math.min(1,(A.slope[n]||0)/0.08)]];
     if(A.chlDist)parts.push([.10*(A.chlAge&&!isNaN(A.chlAge[n])?Math.max(0,1-A.chlAge[n]/6):1),Math.exp(-A.chlDist[n]/5)]);
-    if(A.geo&&!isNaN(A.geo.slope[n])){const edge=Math.min(1,A.geo.slope[n]/4e-6)*(WARM_SP[spKey]?(A.slaL[n]>-0.02?1:.5):1);parts.push([.15,Math.max(edge,WARM_SP[spKey]?Math.exp(-A.warmDist[n]/15)*.8:0)]);}
+    if(A.geo&&!isNaN(A.geo.slope[n])){
+      // strength of the sea-level edge (current along it), counted fully on the warm side; plus closeness to an eddy rim:
+      // warm-core rims best for warm-water species, cold-core rims (upwelled nutrients) count for something too
+      const hiSide=!A.slaA||isNaN(A.slaA[n])||A.slaA[n]>-0.01,edge=Math.min(1,A.geo.slope[n]/4e-6)*(WARM_SP[spKey]&&!hiSide?.5:1);
+      const wr=A.warmRim?Math.exp(-A.warmRim[n]/6):0,cr=A.coldRim?Math.exp(-A.coldRim[n]/6):0;
+      parts.push([.15,Math.max(edge,(WARM_SP[spKey]?.9:.6)*wr,.55*cr)]);}
     if(A.convAbs&&!isNaN(A.convAbs[n]))parts.push([.08,Math.max(0,Math.min(1,A.convAbs[n]))]);
     if(A.D_kd&&!isNaN(A.D_kd[n]))parts.push([.05*(A.kdAge&&!isNaN(A.kdAge[n])?Math.max(0,1-A.kdAge[n]/6):1),WARM_SP[spKey]?Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):.6]);
     let ws=0,v=0;for(const[w,x]of parts){ws+=w;v+=w*x;}v/=ws;
@@ -694,7 +703,7 @@ function waypoints(A,score,n=WP_N){
     const per=A.ccFreq[p.k],fd=A.frontDist[p.k],why=[];
     if(fd<3)why.push(per>=.6?"Stable front, held most of the week":per<=.2?"New front, formed in last 1-2 days":"Front building through the week");
     else why.push(`Nearest SST front ${fd.toFixed(0)} km away`);
-    if(A.eddy&&A.eddy[p.k]===1)why.push("inside warm-core eddy");else if(A.warmDist&&A.warmDist[p.k]<20)why.push("edge of warm-core eddy");
+    if(A.warmRim&&A.warmRim[p.k]<8)why.push("on the rim of a warm-core eddy");else if(A.coldRim&&A.coldRim[p.k]<8)why.push("on the rim of a cold-core eddy (upwelled nutrients)");
     if(A.chlDist&&A.chlDist[p.k]<4)why.push("on a chlorophyll edge");
     if(A.convN&&A.convN[p.k]>.5)why.push("currents converging (bait and weed lines)");else if(A.convN&&A.convN[p.k]<-.5)why.push("upwelling edge");
     if(A.slope&&A.slope[p.k]>.05)why.push("steep slope / canyon wall");
@@ -1681,7 +1690,7 @@ const FEATS=[
  {k:"eddy",  nm:"sea level (eddies)",           hi:"warm-core eddies / high sea level",lo:"cold-core eddies / low sea level",sd:.02,fmt:v=>(v*100).toFixed(0)+" cm"}];
 function featAt(A,n){const L=A.sst.length-1,q=x=>x==null||isNaN(x)?null:x,cl=A.chl?A.chl[Math.min(L,A.chl.length-1)][n]:NaN;
   return{sst:q(A.sst[L][n]),chg:q(A.change[n]),grad:q(A.fr[L].g[n]),front:q(A.frontDist[n]),chl:cl>0?Math.log10(cl):null,
-    chle:A.chlDist?q(A.chlDist[n]):null,kd:A.D_kd?q(A.D_kd[n]):null,cur:A.speed?q(A.speed[n]):null,conv:A.convN?q(A.convN[n]):null,eddy:A.slaL?q(A.slaL[n]):null};}
+    chle:A.chlDist?q(A.chlDist[n]):null,kd:A.D_kd?q(A.D_kd[n]):null,cur:A.speed?q(A.speed[n]):null,conv:A.convN?q(A.convN[n]):null,eddy:A.slaA?q(A.slaA[n]):A.slaL?q(A.slaL[n]):null};}
 /* where this spot ranks (0..1) against all sea within 30 km */
 function featRank(A,i0,j0,f){const R=Math.round(30/(AREA.res*KM)),cnt={},below={};
   for(let j=Math.max(0,j0-R);j<=Math.min(NY-1,j0+R);j++)for(let i=Math.max(0,i0-R);i<=Math.min(NX-1,i0+R);i++){if((i-i0)**2+(j-j0)**2>R*R)continue;const n=ix(i,j);if(A.land[n])continue;
