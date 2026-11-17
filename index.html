@@ -184,8 +184,9 @@ ol.plan b.stop{color:var(--accent)}ol.plan{margin:10px 0 6px;padding-left:22px;l
     <div class="cform" id="cform"><input id="cpos" placeholder="Position, e.g. 37 36.363 S 177 19.661 E"><input id="ctime" type="datetime-local"><select id="csp"></select><input id="cnum" type="number" min="1" max="20" value="1" title="How many" style="flex:0 0 70px"><input id="ckg" placeholder="Weight kg (optional)" inputmode="decimal"><label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="crel" checked> Released</label><input id="cnote" placeholder="Notes: lure, depth, birds..."><button class="btn pri" id="csave">Save catch</button><button class="btn" id="ccancel">Cancel</button></div>
     <div id="learnbox"></div><div id="cstats"></div><div id="clist"></div>
     <h3>Data inputs</h3><div id="sources"></div>
-    <h3>Waypoints and trolling courses</h3><p class="exp" style="margin:-4px 0 8px">Ranked 1 to 20 by how likely fish are along the whole trolling course today (WP1 is the best bet). The rating is out of 10, where 10 means perfect conditions for NZ waters: a strong, settled temperature break with a colour edge, the right temperature and depth for the species, steep structure, a warm-eddy edge and converging current all in one place. Bite times aren't included, so check them separately.</p>
+    <h3>Waypoints and trolling courses</h3><p class="exp" style="margin:-4px 0 8px">Up to 6 per area (Mercury Islands, Aldermen, Mayor, Motiti, White Island and so on), each ranked #1 to #6 within its area by how likely fish are along the whole trolling course today. Pick an area to see just its spots. Codes like MAY2 are what the GPX export uses. The rating is out of 10, where 10 means perfect conditions for NZ waters: a strong, settled temperature break with a colour edge, the right temperature and depth for the species, steep structure, a warm-eddy edge and converging current all in one place. Bite times aren't included, so check them separately.</p>
     <div class="actions"><button class="btn pri" id="gpxbtn">Download GPX for chartplotter</button><button class="btn" id="copybtn">Copy waypoints</button></div>
+    <div class="days" id="wpareas" style="flex-wrap:wrap"></div>
     <div id="wplist"></div>
   </div>
 
@@ -659,7 +660,14 @@ const onLand=(la,lo)=>{const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round(
       gradient every 300 m so the line bends with the front; if there's no front it follows the depth contour,
    2. zig-zags across it in ~0.8 nm legs, 0.35 nm either side, so lures sweep both the warm and cool side,
    3. runs into the surface current (lures swim better, you hold on the break longer) and reports the warm side. */
-const WP_N=20,WP_R=5;
+const WP_N=6,WP_R=5;   // waypoints per area
+// fishing areas: every sea cell belongs to its nearest anchor; waypoints are ranked inside each area
+const REGIONS=[["Great Barrier & Cuvier","GBI",-36.25,175.70],["Mercury Islands & Whitianga","MER",-36.62,175.97],["Offshore north (the Hook, Mercury Knolls, Footprint)","NTH",-36.35,176.50],
+ ["Aldermen & Tairua","ALD",-36.97,176.15],["Mayor Island & Whangamatā","MAY",-37.28,176.30],["Motiti & Tauranga","MOT",-37.62,176.42],["Mid-bay offshore (the Rangas)","MID",-37.10,176.95],
+ ["Whale Island & Whakatāne","WHK",-37.82,176.95],["White Island & Volkner Rocks","WHI",-37.52,177.20],["Ōpōtiki to Cape Runaway","ECP",-37.62,177.80]];
+let REGION_OF=null;
+function regionOf(n){if(!REGION_OF){REGION_OF=new Int8Array(NN);for(let k=0;k<NN;k++){const ci=k%NX,la=latOf((k-ci)/NX),lo=lonOf(ci);let b=0,bd=1e9;
+    REGIONS.forEach(([,,ra,ro],r)=>{const d=(la-ra)**2+((lo-ro)*Math.cos(la*RAD))**2;if(d<bd){bd=d;b=r;}});REGION_OF[k]=b;}}return REGION_OF[n];}
 function traceLine(A,la,lo,mode,dist){const L=A.sst.length-1,G=mode==="front"?A.fr[L]:A.bg,step=.3,pts=[[la,lo]];
   const dirAt=(a,o)=>{const i=Math.round((o-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-a)/AREA.res);if(i<1||j<1||i>=NX-1||j>=NY-1)return null;const n=ix(i,j),gx=G.gx[n],gy=G.gy[n],m=Math.hypot(gx,gy);
     return m>0&&!isNaN(m)?{ax:-gy/m,ay:gx/m,g:m}:null;};
@@ -696,8 +704,10 @@ function trollNote(along){return along==null?"":Math.abs(along)<.15?", current s
 function waypoints(A,score,n=WP_N){
   const L=A.sst.length-1,cells=[],RM=resMask();for(let k=0;k<NN;k++){const ci=k%NX,cj=(k-ci)/NX;if(score[k]>0&&ci>4&&cj>4&&cj<NY-5&&lonOf(ci)<=178.0&&!RM[k]&&A.depth[k]>25)cells.push(k);}
   cells.sort((a,b)=>score[b]-score[a]);
-  const top=score[cells[0]]||0,picked=[];
-  for(const k of cells){if(picked.length>=n||score[k]<top*.3)break;const i=k%NX,j=(k-i)/NX;if(picked.some(p=>Math.hypot(p.i-i,(p.j-j)*1.25)<=WP_R))continue;picked.push({i,j,k});}
+  // up to n per area, so a quiet area you have to fish (Mayor, say) still gets its best spots
+  const picked=[],cnt=new Array(REGIONS.length).fill(0),rtop=new Array(REGIONS.length).fill(0);
+  for(const k of cells){const r=regionOf(k);if(!rtop[r])rtop[r]=score[k];if(cnt[r]>=n||score[k]<Math.max(.06,rtop[r]*.3))continue;
+    const i=k%NX,j=(k-i)/NX;if(picked.some(p=>Math.hypot(p.i-i,(p.j-j)*1.25)<=WP_R))continue;picked.push({i,j,k,r});cnt[r]++;}
   const at=(la,lo)=>{const i=Math.round((lo-AREA.lon0)/AREA.res),j=Math.round((AREA.lat1-la)/AREA.res);if(i<0||j<0||i>=NX||j>=NY)return NaN;const n=ix(i,j);return A.land[n]||RM[n]?NaN:score[n];};
   const courseVal=(c,peak)=>{let s=0,k=0;for(let q=1;q<c.length;q++){const a=c[q-1],b=c[q],st=Math.max(1,Math.ceil(hav(a[0],a[1],b[0],b[1])/(.2*NM)));
       for(let t=0;t<st;t++){const v=at(a[0]+(b[0]-a[0])*t/st,a[1]+(b[1]-a[1])*t/st);if(!isNaN(v)){s+=v;k++;}}}return .4*peak+.6*(k?s/k:peak);};
@@ -718,8 +728,9 @@ function waypoints(A,score,n=WP_N){
     if(A.slope&&A.slope[p.k]>.05)why.push("steep slope / canyon wall");
     return{n:w+1,lat:la,lon:lo,score:Math.round(score[p.k]*100),sst:A.sst[L][p.k],brk:(A.fr[L].g[p.k]||0)*2,depth:A.depth[p.k],
       chl:A.chl?A.chl[A.chl.length-1][p.k]:null,change:A.change[p.k],tag:why.join(", "),line,course,ends:[course[0],course[course.length-1]],head:info.h,along:info.along,warm:info.warm,len,mode,
-      src:mode==="front"?"following the temperature break":"following the depth contour",port,cv:courseVal(course,score[p.k])};})
-    .sort((a,b)=>b.cv-a.cv).map((w,k)=>({...w,n:k+1,score:Math.round(w.cv*100),rate:Math.round(w.cv*10)}));}
+      src:mode==="front"?"following the temperature break":"following the depth contour",port,reg:p.r,cv:courseVal(course,score[p.k])};})
+    .sort((a,b)=>b.cv-a.cv).map((w,k,all)=>{const rr=all.filter((x,q)=>q<=k&&x.reg===w.reg).length;
+      return{...w,n:k+1,rr,id:REGIONS[w.reg][1]+rr,area:REGIONS[w.reg][0],score:Math.round(w.cv*100),rate:Math.round(w.cv*10)};});}
 // 10/10 = every factor at its ideal at once: on a strong, settled temperature break with a colour edge, right species temperature
 // and depth, steep structure, a warm-eddy edge and converging current. Not relative to today's best.
 const RATE_WORDS=["Very low chance","Very low chance","Very low chance","Low chance","Low chance","Fair chance","Fair chance","Good chance","Very good chance","Excellent chance","Exceptional chance"];
@@ -942,7 +953,8 @@ function draw(){
   drawMarks(g,X,Y,W,H);
   drawCatches(g,X,Y,inView);
   drawPlan(g,X,Y);
-  for(const w of MAP.wps){const sel=MAP.sel===w.n,show=sel||VIEW.z>=2||MAP.wps.length<=8;
+  for(const w of wpShown()){const sel=MAP.sel===w.n,show=sel||VIEW.z>=2||MAP.wpReg!=null||w.rr<=2;
+    if(!sel&&MAP.wpReg==null&&VIEW.z<1.6&&w.rr>2)continue;   // zoomed out on all areas: just each area's top 2
     if(show){g.setLineDash([3,4]);g.strokeStyle=chartMode?"rgba(11,42,85,.6)":"rgba(255,255,255,.55)";g.lineWidth=1.2;g.beginPath();w.line.forEach((p,k)=>k?g.lineTo(X(p[1]),Y(p[0])):g.moveTo(X(p[1]),Y(p[0])));g.stroke();g.setLineDash([]);
       g.strokeStyle=sel?"#ffb547":chartMode?"#0b2a55":"#fff";g.lineWidth=sel?2.6:1.8;g.beginPath();w.course.forEach((p,k)=>k?g.lineTo(X(p[1]),Y(p[0])):g.moveTo(X(p[1]),Y(p[0])));g.stroke();
       // direction of travel: red chevrons on every leg, big red arrowhead at the finish, green dot at the start
@@ -952,8 +964,9 @@ function draw(){
         head((x0+x1)/2,(y0+y1)/2,(Math.atan2(x1-x0,-(y1-y0))/RAD+360)%360,sel?7:5.5);}
       const e=w.course[w.course.length-1],e0=w.course[w.course.length-2]||w.course[0],xe=X(e[1]),ye=Y(e[0]);head(xe,ye,(Math.atan2(xe-X(e0[1]),-(ye-Y(e0[0])))/RAD+360)%360,sel?14:10);
       const s0=w.course[0];g.fillStyle="#2ee66a";g.strokeStyle="#04201b";g.lineWidth=1.5;g.beginPath();g.arc(X(s0[1]),Y(s0[0]),sel?6:4.5,0,7);g.fill();g.stroke();}
-    const x=X(w.lon),y=Y(w.lat),rr=VIEW.z<1.5&&MAP.wps.length>8?8:10;g.fillStyle=sel?"#ffb547":w.n<=5?"#2ee6c5":"#8ff0dc";g.strokeStyle="#04201b";g.lineWidth=2;g.beginPath();g.arc(x,y,rr,0,7);g.fill();g.stroke();
-    g.fillStyle="#04201b";g.font="bold 11px sans-serif";g.textAlign="center";g.fillText(w.n,x,y+4);g.textAlign="left";}
+    const x=X(w.lon),y=Y(w.lat),rr=VIEW.z<1.5&&MAP.wpReg==null?8:10;g.fillStyle=sel?"#ffb547":w.rr===1?"#2ee6c5":"#8ff0dc";g.strokeStyle="#04201b";g.lineWidth=2;g.beginPath();g.arc(x,y,rr,0,7);g.fill();g.stroke();
+    g.fillStyle="#04201b";g.font="bold 11px sans-serif";g.textAlign="center";g.fillText(w.rr,x,y+4);g.textAlign="left";
+    if(VIEW.z>=1.6||sel){g.font="bold 9px sans-serif";g.lineWidth=3;g.strokeStyle="rgba(0,0,0,.75)";g.strokeText(w.id,x+rr+2,y-rr+2);g.fillStyle="#bff7ec";g.fillText(w.id,x+rr+2,y-rr+2);}}
   // GPS position and line to target
   const me=MAP.me;if(MAP.target&&me){g.setLineDash([8,5]);g.strokeStyle="#4fb8ff";g.lineWidth=2.2;g.beginPath();g.moveTo(X(me.lon),Y(me.lat));g.lineTo(X(MAP.target.lo),Y(MAP.target.la));g.stroke();g.setLineDash([]);}
   if(MAP.target){const x=X(MAP.target.lo),y=Y(MAP.target.la);g.strokeStyle="#4fb8ff";g.lineWidth=2.5;g.beginPath();g.arc(x,y,13,0,7);g.stroke();}
@@ -1085,24 +1098,29 @@ function renderFcDays(){const el=$("fcdays"),A=MAP.A;if(MAP.layer!=="fc"||!A||!A
   el.innerHTML=A.fcDates.map((d,k)=>k?`<div class="day ${k===MAP.fcDay?"on":""}" data-k="${k}">${k===1?"Tomorrow":fmtDate(d)}</div>`:"").join("");
   el.querySelectorAll(".day").forEach(b=>b.onclick=()=>{MAP.fcDay=+b.dataset.k;renderFcDays();draw();});}
 
+function wpShown(){return MAP.wpReg==null?MAP.wps:MAP.wps.filter(w=>w.reg===MAP.wpReg);}
 function wpCards(){
-  $("wplist").innerHTML=MAP.wps.map(w=>`<div class="wp ${MAP.sel===w.n?"sel":""}" data-n="${w.n}">
-    <div class="wph"><span class="wpn">WP${w.n}${w.n===1?" · best bet":""}</span><span class="wps" title="Out of 10, where 10 is perfect conditions for NZ waters">${w.rate}/10 · ${rateWord(w.rate)}</span></div>
+  const regs=REGIONS.map((r,i)=>({i,nm:r[0],c:MAP.wps.filter(w=>w.reg===i)})).filter(r=>r.c.length);
+  $("wpareas").innerHTML=`<button class="day${MAP.wpReg==null?" on":""}" data-r="">All areas</button>`+regs.map(r=>`<button class="day${MAP.wpReg===r.i?" on":""}" data-r="${r.i}">${r.nm.replace(/ \(.*\)/,"")} · best ${Math.max(...r.c.map(w=>w.rate))}/10</button>`).join("");
+  $("wpareas").querySelectorAll("button").forEach(b=>b.onclick=()=>{MAP.wpReg=b.dataset.r===""?null:+b.dataset.r;MAP.sel=null;wpCards();draw();});
+  const L=MAP.wpReg==null?MAP.wps:MAP.wps.slice().sort((a,b)=>a.rr-b.rr).filter(w=>w.reg===MAP.wpReg);
+  $("wplist").innerHTML=L.map(w=>`<div class="wp ${MAP.sel===w.n?"sel":""}" data-n="${w.n}">
+    <div class="wph"><span class="wpn">${w.id} · ${w.area.replace(/ \(.*\)/,"")} #${w.rr}${w.n===1?" · best bet overall":w.rr===1?" · best in area":""}</span><span class="wps" title="Out of 10, where 10 is perfect conditions for NZ waters">${w.rate}/10 · ${rateWord(w.rate)}</span></div>
     <div class="wpt">${w.tag}</div>
     <div class="wpc">${fmtLL(w.lat,w.lon)}</div>
     <div class="chips"><span class="chip">${w.sst.toFixed(1)}°C</span><span class="chip">Break ${w.brk.toFixed(2)}°C/2 km</span><span class="chip">${Math.round(w.depth)} m deep</span>${w.chl!=null&&!isNaN(w.chl)?`<span class="chip">Chl ${w.chl.toFixed(2)}</span>`:""}<span class="chip">5-day ${w.change>=0?"+":""}${w.change.toFixed(1)}°C</span></div>
     <div class="wpr">Troll course ${w.len.toFixed(1)} nm, zig-zagging ${w.src}, general heading ${Math.round(w.head).toString().padStart(3,"0")}°T${trollNote(w.along)}.${w.warm?` Warm water on your ${w.warm} side.`:""} Start ${fmtLL(w.course[0][0],w.course[0][1])}.</div>
     <div class="srcm">${w.port.d.toFixed(0)} nm on ${Math.round(w.port.b).toString().padStart(3,"0")}° from ${w.port.nm}</div></div>`).join("");
-  $("wplist").querySelectorAll(".wp").forEach(el=>el.onclick=()=>{MAP.sel=+el.dataset.n;const w=MAP.wps.find(x=>x.n===MAP.sel);MAP.target={n:"WP"+w.n,la:w.lat,lo:w.lon};draw();wpCards();});}
+  $("wplist").querySelectorAll(".wp").forEach(el=>el.onclick=()=>{MAP.sel=+el.dataset.n;const w=MAP.wps.find(x=>x.n===MAP.sel);MAP.target={n:w.id,la:w.lat,lo:w.lon};draw();wpCards();});}
 
 function srcPanel(){$("sources").innerHTML=`<div class="mkhint">${MAP.src.filter(s=>s.ok).length} live data streams, plus moon and sun computed on the device. Green: current. Amber: stale, so it's left out of the score. Red: unavailable.</div>`+MAP.src.map(s=>`<div class="src"><span class="dot ${s.ok?"ok":s.sample||s.stale?"smp":"bad"}"></span><div><b>${s.name}</b> <span class="srcm">${s.detail}</span></div></div>`).join("");}
 
 function gpx(){const t=new Date().toISOString();
   return`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Bluewater Bite NZ" xmlns="http://www.topografix.com/GPX/1/1">\n`+
-  MAP.wps.map(w=>`<wpt lat="${w.lat.toFixed(5)}" lon="${w.lon.toFixed(5)}"><name>BB WP${w.n}</name><desc>${w.tag}. ${w.sst.toFixed(1)}C, ${Math.round(w.depth)}m</desc><time>${t}</time></wpt>`).join("\n")+"\n"+
+  MAP.wps.map(w=>`<wpt lat="${w.lat.toFixed(5)}" lon="${w.lon.toFixed(5)}"><name>BB ${w.id}</name><desc>${w.tag}. ${w.sst.toFixed(1)}C, ${Math.round(w.depth)}m</desc><time>${t}</time></wpt>`).join("\n")+"\n"+
   USERMARKS.map(m=>`<wpt lat="${m.la.toFixed(5)}" lon="${m.lo.toFixed(5)}"><name>${m.n.replace(/[<&>]/g,"")}</name></wpt>`).join("\n")+"\n"+
   CATCHES.map(c=>`<wpt lat="${c.la.toFixed(5)}" lon="${c.lo.toFixed(5)}"><name>${(c.spn||"Catch").replace(/[<&>]/g,"")} ${c.t.slice(0,10)}</name><desc>${c.sst!=null?c.sst.toFixed(1)+"C":""}</desc></wpt>`).join("\n")+"\n"+
-  MAP.wps.map(w=>`<rte><name>BB Troll ${w.n}</name>${w.course.map((e,k)=>`<rtept lat="${e[0].toFixed(5)}" lon="${e[1].toFixed(5)}"><name>T${w.n}-${k+1}</name></rtept>`).join("")}</rte>`).join("\n")+"\n</gpx>";}
+  MAP.wps.map(w=>`<rte><name>BB Troll ${w.id}</name>${w.course.map((e,k)=>`<rtept lat="${e[0].toFixed(5)}" lon="${e[1].toFixed(5)}"><name>${w.id}-${k+1}</name></rtept>`).join("")}</rte>`).join("\n")+"\n</gpx>";}
 
 function mapUpdate(){if(!MAP.ready)return;MAP.score=scoreField(MAP.A,state.sp);MAP.scoreVer=(MAP.scoreVer||0)+1;let m=0;for(const v of MAP.score)if(v>m)m=v;MAP.scoreMax=m||1;
   MAP.wps=waypoints(MAP.A,MAP.score);MAP.sel=null;draw();wpCards();}
@@ -1256,7 +1274,7 @@ $("gps").onclick=gpsToggle;$("savechart").onclick=saveChartOffline;
       const r=cv.getBoundingClientRect(),V=viewBox();VIEW.clon=start.clon-dx/r.width*(V.lon1-V.lon0);VIEW.clat=start.clat+dy/r.height*(V.lat1-V.lat0);redraw();}});
   const end=e=>{const was=pts.has(e.pointerId);pts.delete(e.pointerId);if(pts.size<2)pinch=null;if(!was||!MAP.ready)return;
     if(pts.size===0&&!moved){const[la,lo]=toLL(e.clientX,e.clientY),r=cv.getBoundingClientRect(),V=viewBox();
-      const hit=MAP.wps.find(w=>Math.hypot((w.lon-lo)/(V.lon1-V.lon0)*r.width,(w.lat-la)/(V.lat1-V.lat0)*r.height)<14);
+      const hit=wpShown().find(w=>Math.hypot((w.lon-lo)/(V.lon1-V.lon0)*r.width,(w.lat-la)/(V.lat1-V.lat0)*r.height)<14);
       if(hit){MAP.sel=hit.n;wpCards();document.querySelector(`.wp[data-n="${hit.n}"]`)?.scrollIntoView({behavior:"smooth",block:"nearest"});}
       if(addingMark){$("mkpos").value=`${la.toFixed(5)}, ${lo.toFixed(5)}`;$("mkhint").textContent="Position set from your tap. Add a name and Save.";}
       probeAt(la,lo);}
@@ -1268,7 +1286,7 @@ $("gps").onclick=gpsToggle;$("savechart").onclick=saveChartOffline;
   $("zreset").onclick=()=>{VIEW.z=1;redraw();};})();
 setInterval(()=>{if(MAP.target&&!$("tab-map").hidden)navUpdate();},5000);
 $("gpxbtn").onclick=()=>{const b=new Blob([gpx()],{type:"application/gpx+xml"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=`bluewater-bite-${state.sp}-${new Date().toISOString().slice(0,10)}.gpx`;document.body.appendChild(a);a.click();a.remove();};
-$("copybtn").onclick=async()=>{const t=MAP.wps.map(w=>`WP${w.n} ${fmtLL(w.lat,w.lon)} | ${w.tag} | ${w.sst.toFixed(1)}C ${Math.round(w.depth)}m | troll ${w.len.toFixed(1)}nm zig-zag heading ${Math.round(w.head)}T from ${fmtLL(w.course[0][0],w.course[0][1])}`).join("\n");
+$("copybtn").onclick=async()=>{const t=MAP.wps.map(w=>`${w.id} (${w.area}) ${fmtLL(w.lat,w.lon)} | ${w.tag} | ${w.sst.toFixed(1)}C ${Math.round(w.depth)}m | troll ${w.len.toFixed(1)}nm zig-zag heading ${Math.round(w.head)}T from ${fmtLL(w.course[0][0],w.course[0][1])}`).join("\n");
   try{await navigator.clipboard.writeText(t);$("copybtn").textContent="Copied";}catch(e){$("probe").textContent=t;}setTimeout(()=>$("copybtn").textContent="Copy waypoints",1500);};
 window.addEventListener("resize",()=>{if(MAP.ready&&!$("tab-map").hidden)draw();});
 $("species").addEventListener("change",()=>{mapUpdate();learnPanel();});
@@ -1532,8 +1550,8 @@ function biteBonus(W,a,b){let f=1,tag=null;for(const x of W.bites){const ov=Math
 function planCandidates(P,D,T,all){const out=[],seen=[];const sMax=MAP.scoreMax||1;
   // a mark and a waypoint on the same water become one stop: the mark's name with the waypoint's trolling course
   const add=c=>{const dup=seen.find(o=>hav(o.la,o.lo,c.la,c.lo)/NM<1.6);if(dup){const wp=dup.w?dup:c.w?c:null,mk=!dup.w?dup:!c.w?c:null,v=Math.max(dup.v,c.v);
-      if(wp&&mk){Object.assign(dup,wp,{n:`${mk.n} (WP${wp.w.n} course)`,v,ap:mk.ap,mark:mk.n});}else if(c.v>dup.v)Object.assign(dup,c);return;}seen.push(c);out.push(c);};
-  for(const w of MAP.wps){const e=evalSpot(w.lat,w.lon,1);if(!e)continue;add({n:`WP${w.n}`,la:w.course[0][0],lo:w.course[0][1],la2:w.course[w.course.length-1][0],lo2:w.course[w.course.length-1][1],
+      if(wp&&mk){Object.assign(dup,wp,{n:`${mk.n} (${wp.w.id} course)`,v,ap:mk.ap,mark:mk.n});}else if(c.v>dup.v)Object.assign(dup,c);return;}seen.push(c);out.push(c);};
+  for(const w of MAP.wps){const e=evalSpot(w.lat,w.lon,1);if(!e)continue;add({n:w.id,la:w.course[0][0],lo:w.course[0][1],la2:w.course[w.course.length-1][0],lo2:w.course[w.course.length-1][1],
     fish:Math.max(30,w.len/PSET.troll*60),e,w,v:Math.pow(e.s/sMax,2)*(e.inRange?1:.6)});}
   for(const m of allMarks()){if(nearReserve(m.la,m.lo))continue;const e=evalSpot(m.la,m.lo);if(!e)continue;
     add({n:m.n,la:m.la,lo:m.lo,la2:m.la,lo2:m.lo,fish:50,e,ap:m.ap,v:Math.pow(e.s/sMax,2)*(e.inRange?1:.6)*(e.alert?1.1:1)*(m.ap?.95:1)});}
@@ -1628,7 +1646,7 @@ async function makePlan(text){const out=$("planout");out.innerHTML=`<div class="
     html+=`<div class="why" style="margin-top:8px"><b>${nDays>1?`Day ${k+1} · `:""}${dayLblF(dd.W)}${k===0&&D?`, toward ${D.n}`:k===0&&!D?", best water within reach":""}</b> · ${dd.route.length} stop${dd.route.length===1?"":"s"} · ${dd.S.dist.toFixed(0)} nm</div><ol class="plan">${items.map(s=>`<li>${s}</li>`).join("")}</ol>`;
     if(dd.anchor){const w=dd.anchor.w;html+=`<div class="why">🌙 <b>Overnight:</b> anchor in the lee of ${dd.anchor.name}, on the ${dd.anchor.side} side${w?` (wind ${Math.round(w.kn)} kn from the ${comp16(w.from)} that day, ECMWF)`:""}. Check the overnight forecast and local knowledge before choosing your bay. In the morning, plan again with "from ${dd.anchor.name.split(" (")[0]}" for fresh satellite data.</div>`;}
     pts.push(...(k===0?[[dd.start[0],dd.start[1],k===0?"Start":""]]:[]),...dd.route.flatMap(c=>c.w?[[c.la,c.lo,c.n],[c.la2,c.lo2,""]]:[[c.la,c.lo,c.n]]),[dd.W.E[0],dd.W.E[1],dd.last?"":`Anchor ${dd.anchor.name}`]);});
-  const top=MAP.wps[0];let heads="";if(D&&top&&!days.some(dd=>dd.route.some(c=>c.w===top))){const ev=evalSpot(top.lat,top.lon,1);if(ev&&T&&ev.s>T.e.s*1.25)heads=`<div class="why">Heads up: the best water on the map today is <b>WP1</b>, ${legF(P,[top.lat,top.lon])} from your start (${top.tag.toLowerCase()}). Leave the destination blank and I'll plan around it.</div>`;}
+  const top=MAP.wps[0];let heads="";if(D&&top&&!days.some(dd=>dd.route.some(c=>c.w===top))){const ev=evalSpot(top.lat,top.lon,1);if(ev&&T&&ev.s>T.e.s*1.25)heads=`<div class="why">Heads up: the best water on the map today is <b>${top.id}</b> (${top.area}), ${legF(P,[top.lat,top.lon])} from your start (${top.tag.toLowerCase()}). Leave the destination blank and I'll plan around it.</div>`;}
   const res=[...new Set(days.flatMap(dd=>dd.route.flatMap(c=>RESERVES.filter(r=>hav(c.la,c.lo,(r.bb[1]+r.bb[3])/2,(r.bb[0]+r.bb[2])/2)/NM<6).map(r=>r.short))))];
   const W1=days[0].W,w=windAt(days[0].route[0].la,days[0].route[0].lo,W1.leave),b=typeof baroAt==="function"?baroAt(W1.leave):null;
   let tide="";if(TIDES){const tp=TIDES.ports.map(x=>({x,d:hav(x.lat,x.lon,P[0],P[1])})).sort((a,b)=>a.d-b.d)[0].x,ev=(tp.ev||[]).filter(e=>e.t>W1.leave-3*36e5&&e.t<days[0].S.home+36e5);if(ev.length)tide=`Tides at ${tp.name.replace("Whakatane","Whakatāne")}: ${ev.map(e=>`${e.type==="H"?"high":"low"} ${tmF(e.t)}`).join(", ")}.`;}
