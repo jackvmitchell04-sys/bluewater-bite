@@ -603,6 +603,9 @@ function analyse(D){
   A.frontDist=distKm(A.cc[L]);
   A.persist=new Float32Array(NN);for(let n=0;n<NN;n++){let c=0;for(const f of A.fr)if(f.g[n]>0.06)c++;A.persist[n]=c/A.fr.length;}
   A.change=new Float32Array(NN);for(let n=0;n<NN;n++)A.change[n]=D.sst[L][n]-D.sst[0][n];
+  {const K=D.sst.length,xm=(K-1)/2;let sx=0;for(let k=0;k<K;k++)sx+=(k-xm)**2;A.trend=new Float32Array(NN).fill(NaN);
+    for(let n=0;n<NN;n++){let m=0,c=0;for(let k=0;k<K;k++){const v=D.sst[k][n];if(!isNaN(v)){m+=v;c++;}}if(c<K)continue;m/=c;let s=0;for(let k=0;k<K;k++)s+=(k-xm)*(D.sst[k][n]-m);A.trend[n]=s/sx;}
+    const v=[...A.trend].filter(x=>!isNaN(x));A.trendMean=v.length?v.reduce((a,b)=>a+b,0)/v.length:null;A.trendDays=K-1;}
   if(D.chl){A.chlLog=D.chl.map(c=>c.map(v=>v>0?Math.log10(v):NaN));const cl=A.chlLog[A.chlLog.length-1];A.chlG=gradient(cl).g;A.chlEdge=cayulaCornillon(smooth(cl),{minDT:0.08});
     A.chlDist=distKm(A.chlEdge);
     // oceanic colour fronts (blue meets green offshore, ~0.1-0.8 mg/m3) hold pelagics; murky coastal and river-plume edges don't
@@ -791,7 +794,7 @@ function layerDefs(A){const L=A.sst.length-1,d=Math.min(MAP.day,L);
     hima:A.hima?{f:A.hima,col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:"Hourly SST, Himawari-9 (cloud gaps dark)"}:null,
     change:{f:A.change,col:v=>ramp(DIV,(v+1.5)/3),pal:t=>ramp(DIV,t),lg:["-1.5°C","+1.5°C"],title:"5-day SST change"},
     chart:MAP.BF&&!A.sample?{f:A.depth,col:v=>chartCol(v)||[214,204,166],pal:t=>chartCol(1+t*1999)||[0,0,0],lg:["0 m","2000 m+"],title:"Chart: depth and seafloor relief",note:MAP.BF.label+"."}:null,
-    fc:A.fcDelta?{f:fcField(A,MAP.fcDay),col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:`SST forecast for ${fmtDate(A.fcDates[MAP.fcDay])}`,note:"Today's 1 km satellite SST plus the Copernicus ocean model's forecast change for that day. Good for which way the water is trending (warming, cooling, warm water pushing in); it can't move individual breaks precisely. Tap the map to read the forecast temperature; it updates as you change day."}:null};}
+    fc:A.fcDelta?{f:fcField(A,MAP.fcDay),col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:`SST forecast for ${fmtDate(A.fcDates[MAP.fcDay])}`,note:(A.trendMean!=null?`Observed: the Bay has been ${A.trendMean>=0?"warming":"cooling"} about ${Math.abs(A.trendMean).toFixed(2)}°C a day over the last ${A.trendDays} days. `:"")+"Map: today's 1 km satellite SST plus the Copernicus ocean model's forecast change for that day. Good for which way the water is trending (warming, cooling, warm water pushing in); it can't move individual breaks precisely. Tap the map to compare the model with this week's observed trend at that spot; where they disagree, the observed trend is usually the safer bet for the next day or two."}:null};}
 
 function contours(f,level){const seg=[];
   for(let j=0;j<NY-1;j++)for(let i=0;i<NX-1;i++){const a=f[ix(i,j)],b=f[ix(i+1,j)],c=f[ix(i+1,j+1)],d=f[ix(i,j+1)];if(isNaN(a+b+c+d))continue;
@@ -1047,7 +1050,7 @@ function conditionsAt(la,lo,day){const A=MAP.A;if(!A)return{};const i=Math.round
   let land=A.land[n],dep=A.depth[n];if(MAP.BF&&!A.sample){const B=MAP.BF,fi=Math.round((lo-B.lon0)/B.res),fj=Math.round((B.lat1-la)/B.res);if(fi>=0&&fj>=0&&fi<B.nx&&fj<B.ny){dep=B.depth[fj*B.nx+fi];land=isNaN(dep);}}
   const f=x=>x==null||isNaN(x)?null:x;const dd=detailDepth(la,lo);if(dd!==undefined){dep=dd;land=isNaN(dd);}
   return{land,dep:f(dep),sst:f(A.sst[L][n]),date:A.times[L],hima:A.hima?f(A.hima[n]):null,
-    chl:A.chl?f(A.chl[Math.min(L,A.chl.length-1)][n]):null,front:f(A.frontDist[n]),fc:MAP.layer==="fc"&&A.fcDelta?f(fcField(A,MAP.fcDay)[n]):null,res:reserveAt(la,lo),chlAge:A.chlAge?f(A.chlAge[n]):null};}
+    chl:A.chl?f(A.chl[Math.min(L,A.chl.length-1)][n]):null,front:f(A.frontDist[n]),fc:MAP.layer==="fc"&&A.fcDelta?f(fcField(A,MAP.fcDay)[n]):null,res:reserveAt(la,lo),chlAge:A.chlAge?f(A.chlAge[n]):null,n};}
 
 /* probe readout for a tapped point */
 function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
@@ -1056,7 +1059,8 @@ function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
     near&&near.d<1.5?`<span style="color:${near.m.ch?"#ffd34d":"#ff5fc8"};font-weight:700">${near.m.ap?"≈ ":""}${near.m.n}${near.d>.2?` (${near.d.toFixed(1)} nm)`:""}</span>${near.m.ap?'<br><span class="tipm">Approximate position</span>':""}`:"",`<b>${fmtLL(la,lo)}</b>`,`<span class="tipdd">${la.toFixed(5)}, ${lo.toFixed(5)}</span>`];
   if(c.land)rows.push("Land");
   else{rows.push(`<span class="tipT">${c.sst==null?"n/a":c.sst.toFixed(1)+"°C"}</span> <span class="tipm">${c.date||""}</span>`);
-    if(c.fc!=null){const d=c.sst!=null?c.fc-c.sst:null;rows.unshift(`<b>Forecast ${fmtDate(MAP.A.fcDates[MAP.fcDay])}: ${c.fc.toFixed(1)}°C</b>${d!=null?(Math.abs(d)<.05?" (same as today)":` (${d>0?"+":""}${d.toFixed(1)}°C vs today)`):""}`);}
+    if(c.fc!=null){const d=c.sst!=null?c.fc-c.sst:null,tr=MAP.A.trend?MAP.A.trend[c.n]:NaN;rows.unshift(`<b>Forecast ${fmtDate(MAP.A.fcDates[MAP.fcDay])}: ${c.fc.toFixed(1)}°C</b>${d!=null?(Math.abs(d)<.05?" (same as today)":` (${d>0?"+":""}${d.toFixed(1)}°C vs today)`):""}`+
+      (!isNaN(tr)?`<br>Last ${MAP.A.trendDays} days here: ${tr>=0?"warming":"cooling"} ${Math.abs(tr).toFixed(2)}°C a day; if that carries on: ${(c.sst+tr*(MAP.fcDay+1)).toFixed(1)}°C`:""));}
     if(c.hima!=null)rows.push(`Hourly SST ${c.hima.toFixed(1)}°C${c.sst!=null&&c.hima-c.sst>.8?' <span class="tipm">(skin warmed by afternoon sun on a calm day; the water below is closer to the daily figure)</span>':""}`);
     if(c.dep!=null)rows.push(`Depth ${Math.round(c.dep)} m`);
     if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³${c.chlAge!=null?` <span class="tipm">(${c.chlAge<.5?"seen today":`seen ${Math.round(c.chlAge)} d ago, moved with the current`})</span>`:""}`);
