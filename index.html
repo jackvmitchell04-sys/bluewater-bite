@@ -643,7 +643,7 @@ function scoreField(A,spKey){
   const sp=SPECIES[spKey],dp=DEPTH_PREF[spKey],L=A.sst.length-1,s=new Float32Array(NN).fill(NaN);
   for(let n=0;n<NN;n++){const t=A.sst[L][n],z=A.depth[n];if(A.land[n]||isNaN(t)||!(z>8))continue;
     const o=t<sp.min?sp.min-t:t>sp.max?t-sp.max:0,temp=Math.max(0,1-o/2.5);
-    const depth=z<dp[0]?.5+.5*z/dp[0]:z>dp[1]?Math.max(.4,1-(z-dp[1])/dp[1]):1;
+    const depth=spKey!=="kingfish"?1:z<dp[0]?.5+.5*z/dp[0]:z>dp[1]?Math.max(.4,1-(z-dp[1])/dp[1]):1;   // depth only matters for kingfish (reef fish); pelagics follow the water, not the bottom
     const clean=WARM_SP[spKey]&&A.D_kd&&!isNaN(A.D_kd[n])?.8+.2*Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):1;
     s[n]=Math.min(1,stackScore(featuresAt(A,spKey,n))*(.15+.85*temp)*depth*clean);}
   const M=LEARN_ON&&typeof learnModel==="function"?learnModel(spKey):null;
