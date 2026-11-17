@@ -787,7 +787,11 @@ def currents():
 def forecast():
     pts = ocean_points(0.1)
     log("forecast:", len(pts), "points")
-    R = openmeteo(MARINE, pts, {"hourly": "sea_surface_temperature", "forecast_days": 6, "timezone": "Pacific/Auckland"})
+    try:
+        ref = json.load(open(os.path.join(OUT, "ocean.json")))["sst"]["times"][-1]   # newest satellite day the forecast is added to
+    except Exception:
+        ref = None
+    R = openmeteo(MARINE, pts, {"hourly": "sea_surface_temperature", "past_days": 3, "forecast_days": 6, "timezone": "Pacific/Auckland"})
     lats = sorted({p[0] for p in pts}, reverse=True); lons = sorted({p[1] for p in pts})
     L = {v: k for k, v in enumerate(lats)}; O = {v: k for k, v in enumerate(lons)}
     dates = None; arr = None
@@ -797,7 +801,12 @@ def forecast():
         for t, v in zip(H.get("time", []), H.get("sea_surface_temperature", [])):
             if v is not None:
                 by.setdefault(t[:10], []).append(v)
-        ds = sorted(by)[:6]
+        ds = sorted(by)
+        if ref and ref in ds:
+            ds = ds[ds.index(ref):]
+        elif ref:
+            ds = [x for x in ds if x >= ref] or ds
+        ds = ds[:8]
         if len(ds) < 3:
             continue
         if dates is None:
@@ -808,7 +817,7 @@ def forecast():
     if arr is None:
         raise RuntimeError("no forecast data")
     delta = arr - arr[0]
-    out = {"source": "Copernicus Mercator ocean model via Open-Meteo (change vs today, added to MUR 1 km)", "updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z",
+    out = {"source": "Copernicus Mercator ocean model via Open-Meteo (change since the satellite day, added to MUR 1 km)", "ref": dates[0], "updated": dt.datetime.utcnow().isoformat(timespec="minutes") + "Z",
            **pack(lats, lons, dates, delta, digits=2), "base": pack(lats, lons, dates[:1], arr[:1], digits=2)["frames"][0]}
     with open(os.path.join(OUT, "forecast.json"), "w") as f:
         json.dump(out, f, separators=(",", ":"))
@@ -1399,12 +1408,151 @@ def openmeteo_catchup():
             job()
 
 
+# ---------------------------------------------------------------- self-checks
+def _age_h(stamp):
+    try:
+        return (dt.datetime.utcnow() - dt.datetime.strptime(stamp[:16], "%Y-%m-%dT%H:%M")).total_seconds() / 3600
+    except Exception:
+        return None
+
+
+def _nz_today():
+    return (dt.datetime.utcnow() + dt.timedelta(hours=13)).date()
+
+
+def verify():
+    """Checks the program against reality and against itself.
+    1. Forecast scorecard: every forecast made for a day is kept, then marked against the satellite once that day arrives.
+       Three forecasters compete: the ocean model, this week's observed trend, and 'no change'.
+    2. Sanity checks on every data file: freshness, impossible jumps, implausible values."""
+    path = os.path.join(OUT, "verify.json")
+    try:
+        V = json.load(open(path))
+    except Exception:
+        V = {}
+    V.setdefault("pending", []); V.setdefault("scores", [])
+    O = json.load(open(os.path.join(OUT, "ocean.json")))
+    S = O["sst"]; days = S["times"]
+    mur = np.array([[[np.nan if v is None else v for v in r] for r in fr] for fr in S["frames"]], float)
+    mlat = np.array(S["lats"]); mlon = np.array(S["lons"])
+    try:
+        F = json.load(open(os.path.join(OUT, "forecast.json")))
+    except Exception:
+        F = None
+
+    def at(lats, lons):   # nearest MUR pixel for each forecast grid point
+        return [int(np.abs(mlat - la).argmin()) for la in lats], [int(np.abs(mlon - lo).argmin()) for lo in lons]
+
+    # ---- 1. record today's forecasts (once per satellite day and target day)
+    K = len(days); xm = (K - 1) / 2; x = np.arange(K) - xm
+    ok = np.all(np.isfinite(mur), axis=0)
+    slope = np.where(ok, np.tensordot(x, np.nan_to_num(mur) - np.nanmean(mur, axis=0), axes=1) / (x ** 2).sum(), np.nan)
+    if F and F.get("frames"):
+        fdays = F["times"]; ref = F.get("ref") or days[-1]
+        I, J = at(F["lats"], F["lons"])
+        base_ref = days[-1]
+        if ref in fdays and base_ref in fdays:
+            r0 = fdays.index(base_ref)
+            have = {(p["from"], p["for"]) for p in V["pending"]}
+            for k in range(r0 + 1, min(len(fdays), r0 + 4)):
+                tgt = fdays[k]; lead = k - r0
+                if (base_ref, tgt) in have:
+                    continue
+                model, trend, same = [], [], []
+                for a, i in enumerate(I):
+                    for b, j in enumerate(J):
+                        m0 = mur[-1, i, j]; d1 = F["frames"][k][a][b]; d0 = F["frames"][r0][a][b]
+                        if not np.isfinite(m0) or d1 is None or d0 is None or not np.isfinite(slope[i, j]):
+                            continue
+                        model.append([a, b, round(m0 + d1 - d0, 2)]); trend.append(round(m0 + slope[i, j] * lead, 2)); same.append(round(m0, 2))
+                V["pending"].append({"from": base_ref, "for": tgt, "lead": lead, "lats": F["lats"], "lons": F["lons"],
+                                     "pts": [[m[0], m[1], m[2], t, s] for m, t, s in zip(model, trend, same)]})
+    # ---- mark forecasts whose day has arrived
+    keep = []
+    for p in V["pending"]:
+        if p["for"] not in days:
+            if p["for"] > days[-1]:
+                keep.append(p)
+            continue
+        I, J = at(p["lats"], p["lons"]); k = days.index(p["for"])
+        err = {"model": [], "trend": [], "no change": []}
+        for a, b, m, t, s0 in p["pts"]:
+            obs = mur[k, I[a], J[b]]
+            if np.isfinite(obs):
+                err["model"].append(abs(m - obs)); err["trend"].append(abs(t - obs)); err["no change"].append(abs(s0 - obs))
+        if err["model"]:
+            V["scores"] = [s for s in V["scores"] if not (s["from"] == p["from"] and s["for"] == p["for"])]
+            V["scores"].append({"from": p["from"], "for": p["for"], "lead": p["lead"], "n": len(err["model"]),
+                                "err": {n: round(float(np.mean(e)), 3) for n, e in err.items()}})
+    V["pending"] = keep[-12:]
+    V["scores"] = sorted(V["scores"], key=lambda s: (s["for"], s["lead"]))[-90:]
+    summ = {}
+    for lead in (1, 2, 3):
+        ss = [s for s in V["scores"] if s["lead"] == lead][-14:]
+        if ss:
+            summ[str(lead)] = {"days": len(ss), **{n: round(float(np.mean([s["err"][n] for s in ss])), 3) for n in ("model", "trend", "no change")}}
+            summ[str(lead)]["best"] = min(("model", "trend", "no change"), key=lambda n: summ[str(lead)][n])
+    V["summary"] = summ
+
+    # ---- 2. sanity checks
+    H = []
+    def flag(level, what, msg):
+        H.append({"level": level, "what": what, "msg": msg})
+    today = _nz_today()
+    lag = (today - dt.date.fromisoformat(days[-1])).days
+    if lag > 3:
+        flag("warn", "SST daily", f"Newest 1 km SST is {lag} days old ({days[-1]})")
+    for name, cap in (("chl", "Chlorophyll"), ("kd", "Clarity")):
+        t = O.get(name, {}).get("times") or []
+        if t and (today - dt.date.fromisoformat(t[-1])).days > 4:
+            flag("warn", cap, f"Newest image is {(today - dt.date.fromisoformat(t[-1])).days} days old ({t[-1]})")
+    v = mur[np.isfinite(mur)]
+    if v.size and (v.min() < 8 or v.max() > 28):
+        flag("warn", "SST daily", f"Temperatures outside the normal Bay range: {v.min():.1f} to {v.max():.1f}°C")
+    for k in range(1, K):
+        d = mur[k] - mur[k - 1]; d = d[np.isfinite(d)]
+        if d.size:
+            big = float((np.abs(d) > 1.5).mean()); mean = float(d.mean())
+            if big > 0.02 or abs(mean) > 0.6:
+                flag("warn", "SST daily", f"{days[k - 1]} to {days[k]}: Bay average moved {mean:+.2f}°C, {big:.0%} of water jumped more than 1.5°C overnight. Check before trusting breaks that day.")
+    for name, cap, lim in (("himawari.json", "Hourly SST (Himawari)", 3), ("sharp.json", "Sharp SST", 6), ("truecolour.json", "True colour", 6),
+                           ("model.json", "Ocean model", 16), ("forecast.json", "SST forecast", 16), ("currents.json", "Currents and wind", 30), ("tides.json", "Tides", 30)):
+        try:
+            age = _age_h(json.load(open(os.path.join(OUT, name)))["updated"])
+        except Exception:
+            age = None
+        if age is None:
+            flag("warn", cap, "File missing or unreadable")
+        elif age > lim:
+            flag("warn", cap, f"Last updated {age:.0f} h ago (expected within {lim} h)")
+    try:
+        h = json.load(open(os.path.join(OUT, "himawari.json")))
+        if h.get("coverage", 1) < 0.05:
+            flag("info", "Hourly SST (Himawari)", f"Only {h.get('coverage', 0):.0%} of the Bay seen in the last hours (cloud). Map uses the daily SST instead.")
+    except Exception:
+        pass
+    if F and F.get("frames") and days[-1] in F["times"]:
+        r0 = F["times"].index(days[-1])
+        if r0 + 1 < len(F["times"]):
+            md = np.nanmean([[np.nan if y is None else y for y in r] for r in F["frames"][r0 + 1]]) - np.nanmean([[np.nan if y is None else y for y in r] for r in F["frames"][r0]])
+            tm = float(np.nanmean(slope))
+            if np.isfinite(md) and abs(md - tm) > 0.3:
+                flag("info", "SST forecast", f"Model ({md:+.2f}°C) and this week's trend ({tm:+.2f}°C a day) disagree for {F['times'][r0 + 1]}")
+    elif F:
+        flag("warn", "SST forecast", f"Forecast doesn't start from the satellite day {days[-1]} (starts {F['times'][0]})")
+    V["checks"] = H
+    V["updated"] = dt.datetime.utcnow().isoformat(timespec="minutes") + "Z"
+    with open(path, "w") as f:
+        json.dump(V, f, separators=(",", ":"))
+    log("verify:", len(V["pending"]), "forecasts waiting,", len(V["scores"]), "marked,", len(H), "checks flagged")
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     ok = 0
     # most important first; slow model downloads are skipped if the morning budget runs out
     only = set(sys.argv[1:])
-    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, sharp, truecolour, reserves, dumping, currents, tides, model_grid, forecast, openmeteo_catchup):
+    for job in (bathy, bathy_hd, bathy_tiles, ocean, alerts, himawari, sharp, truecolour, reserves, dumping, currents, tides, model_grid, forecast, openmeteo_catchup, verify):
         if only and job.__name__ not in only:
             continue
         if job in (model_grid, forecast) and time.time() - T0 > 25 * 60:

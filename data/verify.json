@@ -1,0 +1,1 @@
+{"pending":[],"scores":[],"summary":{},"checks":[{"level":"info","what":"Hourly SST (Himawari)","msg":"Only 0% of the Bay seen in the last hours (cloud). Map uses the daily SST instead."},{"level":"warn","what":"SST forecast","msg":"Forecast doesn't start from the satellite day 2026-11-16 (starts 2026-11-18)"}],"updated":"2026-11-17T21:47Z"}

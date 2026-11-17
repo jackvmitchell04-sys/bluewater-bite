@@ -18,7 +18,8 @@ Actions tab > "Morning ocean data" > Run workflow.
 | `data/model.json` | Copernicus Mercator 1/12° surface currents and sea level (24 h mean): detailed arrows, convergence/upwelling, eddies |
 | `data/tiles/` | NIWA survey at ~40 m in 0.25° tiles, loaded when zoomed in (10 m contours) |
 | `data/currents.json` | Geostrophic + Ekman surface currents, ECMWF IFS 0.25° wind (last 24 h and 5-day) |
-| `data/forecast.json` | 5-day SST forecast change (Copernicus Mercator via Open-Meteo) |
+| `data/forecast.json` | SST forecast change from the satellite day (Copernicus Mercator via Open-Meteo, includes 3 past days) |
+| `data/verify.json` | Self-checks: forecast scorecard (model vs observed trend vs no change, marked against the satellite) and data sanity warnings |
 | `data/tides.json` | Hourly model tide for Tauranga, Whitianga, Whakatāne |
 | `data/reserves.json` | DOC marine reserves and Hauraki Gulf high protection areas (Motiti areas are built into the app) |
 | `data/alerts.json` | Marks with a strong front or warm push nearby |

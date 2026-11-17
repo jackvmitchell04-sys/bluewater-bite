@@ -794,7 +794,7 @@ function layerDefs(A){const L=A.sst.length-1,d=Math.min(MAP.day,L);
     hima:A.hima?{f:A.hima,col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:"Hourly SST, Himawari-9 (cloud gaps dark)"}:null,
     change:{f:A.change,col:v=>ramp(DIV,(v+1.5)/3),pal:t=>ramp(DIV,t),lg:["-1.5°C","+1.5°C"],title:"5-day SST change"},
     chart:MAP.BF&&!A.sample?{f:A.depth,col:v=>chartCol(v)||[214,204,166],pal:t=>chartCol(1+t*1999)||[0,0,0],lg:["0 m","2000 m+"],title:"Chart: depth and seafloor relief",note:MAP.BF.label+"."}:null,
-    fc:A.fcDelta?{f:fcField(A,MAP.fcDay),col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:`SST forecast for ${fmtDate(A.fcDates[MAP.fcDay])}`,note:(A.trendMean!=null?`Observed: the Bay has been ${A.trendMean>=0?"warming":"cooling"} about ${Math.abs(A.trendMean).toFixed(2)}°C a day over the last ${A.trendDays} days. `:"")+"Map: today's 1 km satellite SST plus the Copernicus ocean model's forecast change for that day. Good for which way the water is trending (warming, cooling, warm water pushing in); it can't move individual breaks precisely. Tap the map to compare the model with this week's observed trend at that spot; where they disagree, the observed trend is usually the safer bet for the next day or two."}:null};}
+    fc:A.fcDelta?{f:fcField(A,MAP.fcDay),col:v=>turbo((v-lo)/(hi-lo||1)),pal:turbo,lg:[lo.toFixed(1)+"°C",hi.toFixed(1)+"°C"],title:`SST forecast for ${fmtDate(A.fcDates[MAP.fcDay])}`,note:(A.trendMean!=null?`Observed: the Bay has been ${A.trendMean>=0?"warming":"cooling"} about ${Math.abs(A.trendMean).toFixed(2)}°C a day over the last ${A.trendDays} days. `:"")+`${fcScore()}${MAP.fcGap?MAP.fcGap+". ":""}Map: the newest 1 km satellite SST (${fmtDate(A.times[A.times.length-1])}) plus the Copernicus ocean model's change from then to that day. Good for which way the water is trending (warming, cooling, warm water pushing in); it can't move individual breaks precisely. Tap the map to compare the model with this week's observed trend at that spot; the scorecard above shows which has been closer.`}:null};}
 
 function contours(f,level){const seg=[];
   for(let j=0;j<NY-1;j++)for(let i=0;i<NX-1;i++){const a=f[ix(i,j)],b=f[ix(i+1,j)],c=f[ix(i+1,j+1)],d=f[ix(i,j+1)];if(isNaN(a+b+c+d))continue;
@@ -1059,8 +1059,8 @@ function probeAt(la,lo){const c=conditionsAt(la,lo,MAP.day);
     near&&near.d<1.5?`<span style="color:${near.m.ch?"#ffd34d":"#ff5fc8"};font-weight:700">${near.m.ap?"≈ ":""}${near.m.n}${near.d>.2?` (${near.d.toFixed(1)} nm)`:""}</span>${near.m.ap?'<br><span class="tipm">Approximate position</span>':""}`:"",`<b>${fmtLL(la,lo)}</b>`,`<span class="tipdd">${la.toFixed(5)}, ${lo.toFixed(5)}</span>`];
   if(c.land)rows.push("Land");
   else{rows.push(`<span class="tipT">${c.sst==null?"n/a":c.sst.toFixed(1)+"°C"}</span> <span class="tipm">${c.date||""}</span>`);
-    if(c.fc!=null){const d=c.sst!=null?c.fc-c.sst:null,tr=MAP.A.trend?MAP.A.trend[c.n]:NaN;rows.unshift(`<b>Forecast ${fmtDate(MAP.A.fcDates[MAP.fcDay])}: ${c.fc.toFixed(1)}°C</b>${d!=null?(Math.abs(d)<.05?" (same as today)":` (${d>0?"+":""}${d.toFixed(1)}°C vs today)`):""}`+
-      (!isNaN(tr)?`<br>Last ${MAP.A.trendDays} days here: ${tr>=0?"warming":"cooling"} ${Math.abs(tr).toFixed(2)}°C a day; if that carries on: ${(c.sst+tr*(MAP.fcDay+1)).toFixed(1)}°C`:""));}
+    if(c.fc!=null){const d=c.sst!=null?c.fc-c.sst:null,tr=MAP.A.trend?MAP.A.trend[c.n]:NaN;rows.unshift(`<b>Forecast ${fmtDate(MAP.A.fcDates[MAP.fcDay])}: ${c.fc.toFixed(1)}°C</b>${d!=null?(Math.abs(d)<.05?` (same as ${fmtDate(MAP.A.times[MAP.A.times.length-1])} satellite)`:` (${d>0?"+":""}${d.toFixed(1)}°C vs the ${fmtDate(MAP.A.times[MAP.A.times.length-1])} satellite)`):""}`+
+      (!isNaN(tr)?`<br>Last ${MAP.A.trendDays} days here: ${tr>=0?"warming":"cooling"} ${Math.abs(tr).toFixed(2)}°C a day; if that carries on: ${(c.sst+tr*fcLead(MAP.A,MAP.fcDay)).toFixed(1)}°C`:""));}
     if(c.hima!=null)rows.push(`Hourly SST ${c.hima.toFixed(1)}°C${c.sst!=null&&c.hima-c.sst>.8?' <span class="tipm">(skin warmed by afternoon sun on a calm day; the water below is closer to the daily figure)</span>':""}`);
     if(c.dep!=null)rows.push(`Depth ${Math.round(c.dep)} m`);
     if(c.chl!=null)rows.push(`Chlorophyll ${c.chl.toFixed(2)} mg/m³${c.chlAge!=null?` <span class="tipm">(${c.chlAge<.5?"seen today":`seen ${Math.round(c.chlAge)} d ago, moved with the current`})</span>`:""}`);
@@ -1122,8 +1122,10 @@ function renderAlerts(a){const el=$("alertbox");if(!a||!a.items||!a.items.length
 /* ---------- SST forecast ---------- */
 function fcField(A,k){A.fcF=A.fcF||{};if(A.fcF[k])return A.fcF[k];const L=A.sst.length-1,base=A.sst[L],d=A.fcDelta[k],f=new Float32Array(NN).fill(NaN);
   for(let n=0;n<NN;n++)if(!isNaN(base[n]))f[n]=base[n]+(isNaN(d[n])?0:d[n]);return A.fcF[k]=f;}
+const nzDay=(o=0)=>new Date(Date.now()+o*864e5).toLocaleDateString("en-CA",{timeZone:"Pacific/Auckland"});
+const fcLead=(A,k)=>Math.round((Date.parse(A.fcDates[k])-Date.parse(A.times[A.times.length-1]))/864e5);
 function renderFcDays(){const el=$("fcdays"),A=MAP.A;if(MAP.layer!=="fc"||!A||!A.fcDates){el.hidden=true;return;}el.hidden=false;
-  el.innerHTML=A.fcDates.map((d,k)=>k?`<div class="day ${k===MAP.fcDay?"on":""}" data-k="${k}">${k===1?"Tomorrow":fmtDate(d)}</div>`:"").join("");
+  el.innerHTML=A.fcDates.map((d,k)=>k?`<div class="day ${k===MAP.fcDay?"on":""}" data-k="${k}">${d===nzDay()?"Today":d===nzDay(1)?"Tomorrow":fmtDate(d)}</div>`:"").join("");
   el.querySelectorAll(".day").forEach(b=>b.onclick=()=>{MAP.fcDay=+b.dataset.k;renderFcDays();draw();if(MAP.probe)probeAt(MAP.probe.lat,MAP.probe.lon);});}
 
 function wpShown(){return MAP.wpReg==null?MAP.wps:MAP.wps.filter(w=>w.reg===MAP.wpReg);}
@@ -1141,7 +1143,21 @@ function wpCards(){
     <div class="srcm">${w.port.d.toFixed(0)} nm on ${Math.round(w.port.b).toString().padStart(3,"0")}° from ${w.port.nm}</div></div>`).join("");
   $("wplist").querySelectorAll(".wp").forEach(el=>el.onclick=()=>{MAP.sel=+el.dataset.n;const w=MAP.wps.find(x=>x.n===MAP.sel);MAP.target={n:w.id,la:w.lat,lo:w.lon};draw();wpCards();});}
 
-function srcPanel(){$("sources").innerHTML=`<div class="mkhint">${MAP.src.filter(s=>s.ok).length} live data streams, plus moon and sun computed on the device. Green: current. Amber: stale, so it's left out of the score. Red: unavailable.</div>`+MAP.src.map(s=>`<div class="src"><span class="dot ${s.ok?"ok":s.sample||s.stale?"smp":"bad"}"></span><div><b>${s.name}</b> <span class="srcm">${s.detail}</span></div></div>`).join("");}
+function fcScore(){const V=MAP.verify;if(!V)return"";const s=V.summary&&V.summary["1"];
+  if(!s)return"Scorecard: every forecast is now saved and marked against the satellite when its day arrives; results show after the first few days. ";
+  const nm={model:"the model","trend":"this week's trend","no change":"'no change'"};
+  return`Scorecard, next-day forecasts over ${s.days} day${s.days>1?"s":""}: model off by ${s.model.toFixed(2)}°C on average, trend ${s.trend.toFixed(2)}°C, 'no change' ${s["no change"].toFixed(2)}°C. Closest so far: ${nm[s.best]}. `;}
+function checkWaypoints(){const out=[],sp=SPECIES[state.sp];if(!MAP.wps)return out;
+  for(const w of MAP.wps){if(w.rate<3)continue;const bad=[];
+    if(tempSuit(sp,w.sst)===0)bad.push(`${w.sst.toFixed(1)}°C is outside the ${sp.name||state.sp} range`);
+    if(state.sp!=="kingfish"&&w.depth<PELAGIC_MIN_DEPTH)bad.push(`only ${Math.round(w.depth)} m deep`);
+    if(w.course&&w.course.some(e=>reserveAt(e[0],e[1])))bad.push("course crosses a marine reserve");
+    if(bad.length)out.push({level:"warn",what:`Waypoint ${w.id}`,msg:`Rated ${w.rate}/10 but ${bad.join(", ")}. Likely a scoring bug.`});}
+  return out;}
+function srcPanel(){const chk=[...(MAP.verify&&MAP.verify.checks||[]),...checkWaypoints()];$("sources").innerHTML=`<div class="mkhint">${MAP.src.filter(s=>s.ok).length} live data streams, plus moon and sun computed on the device. Green: current. Amber: stale, so it's left out of the score. Red: unavailable.</div>`+MAP.src.map(s=>`<div class="src"><span class="dot ${s.ok?"ok":s.sample||s.stale?"smp":"bad"}"></span><div><b>${s.name}</b> <span class="srcm">${s.detail}</span></div></div>`).join("")+
+  `<div class="mkhint" style="margin-top:10px"><b>Self-checks</b> ${MAP.verify?"(run with every data update"+(MAP.verify.updated?", last "+MAP.verify.updated.slice(11,16)+" UTC":"")+")":"(waiting for the first server run)"}</div>`+
+  (chk.length?chk.map(c=>`<div class="src"><span class="dot ${c.level==="warn"?"smp":"ok"}"></span><div><b>${c.what}</b> <span class="srcm">${c.msg}</span></div></div>`).join(""):`<div class="src"><span class="dot ok"></span><div><b>All clear</b> <span class="srcm">No stale files, impossible jumps or contradictory waypoints found</span></div></div>`)+
+  (MAP.verify?`<div class="src"><span class="dot ok"></span><div><b>Forecast scorecard</b> <span class="srcm">${fcScore()||"Recording"}</span></div></div>`:"");}
 
 function gpx(){const t=new Date().toISOString();
   return`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Bluewater Bite NZ" xmlns="http://www.topografix.com/GPX/1/1">\n`+
@@ -1173,7 +1189,7 @@ async function loadMap(){
     const curP=loadOpenMeteoCurrents().catch(()=>null);
     const [OJ,BF0,hj,mj,cj,fj,rj,aj,shj]=await Promise.all([local("ocean.json"),loadFineBathy(),local("himawari.json"),local("model.json"),local("currents.json"),local("forecast.json"),local("reserves.json"),local("alerts.json"),local("sharp.json")]);
     const sharpP=shj?loadSharp(shj).catch(()=>null):Promise.resolve(null);
-    setReserves(rj);window.ALERTS=aj;MAP.updated=OJ&&OJ.updated;
+    setReserves(rj);window.ALERTS=aj;MAP.updated=OJ&&OJ.updated;local("verify.json").then(v=>{MAP.verify=v;if(MAP.ready)srcPanel();}).catch(()=>{});
     MAP.BF=BF0;
     let S,times,cp=null,kp=null,hp=null,clp=null;
     if(OJ&&OJ.sst){S=blk(OJ.sst);times=S.times;cp=OJ.chl?blk(OJ.chl).fields:null;kp=OJ.kd?blk(OJ.kd).fields[0]:null;hp=OJ.sla?blk(OJ.sla).fields:null;clp=OJ.clim?blk(OJ.clim).fields[0]:null;}
@@ -1212,7 +1228,10 @@ async function loadMap(){
     else{cur=await curP;src.push(cur?{ok:1,name:"Surface currents",detail:"Copernicus Mercator model via Open-Meteo"}:{ok:0,name:"Surface currents",detail:"Unavailable"});
       src.push({ok:0,name:"Wind (ECMWF)",detail:"Comes from the morning server job"});}
     let fcDelta=null,fcDates=null;
-    if(fj&&fj.frames){fcDates=fj.times;fcDelta=fj.frames.map(v=>{const f=jsonGrid({lats:fj.lats,lons:fj.lons,values:v});for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;return fillGaps(f,land,12);});
+    if(fj&&fj.frames){const r0=fj.times.indexOf(times[times.length-1]);let fr=fj.frames;fcDates=fj.times;
+      if(r0>=0){const z=fr[r0];fr=fr.slice(r0).map(v=>v.map((row,a)=>row.map((x,b)=>x==null||z[a][b]==null?null:x-z[a][b])));fcDates=fj.times.slice(r0);}
+      else MAP.fcGap=`Forecast starts ${fj.times[0]}, after the satellite day ${times[times.length-1]}; the days between aren't counted`;
+      fcDelta=fr.map(v=>{const f=jsonGrid({lats:fj.lats,lons:fj.lons,values:v});for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;return fillGaps(f,land,12);});
       src.push({ok:1,name:"SST forecast",detail:`5 days to ${fcDates[fcDates.length-1]}, Copernicus Mercator model change applied to MUR 1 km`});}
     else src.push({ok:0,name:"SST forecast",detail:"Comes from the morning server job"});
     src.push(TIDES?{ok:1,name:"Tides",detail:TIDES.source}:{ok:0,name:"Tides",detail:"Unavailable"});
@@ -1240,6 +1259,7 @@ async function loadMap(){
   st.textContent=D.sample?"":`Live data · ${MAP.src.filter(s=>s.ok).length} of ${MAP.src.length} data streams loaded`;
   $("mapbanner").style.display=D.sample?"block":"none";
   if(MAP.BF&&!D.sample)setTimeout(()=>{bathyImages(MAP.BF);redraw();},30);
+  if(MAP.A.fcDates){const t=MAP.A.fcDates.indexOf(nzDay());if(t>0)MAP.fcDay=t;}
   srcPanel();mapUpdate();renderFcDays();renderCatches();}
 
 /* ---------- wiring ---------- */
