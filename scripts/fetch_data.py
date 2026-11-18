@@ -1259,7 +1259,7 @@ def sharp():
     gy = -gy; g = np.hypot(gx, gy)
     g[land | ~obs] = 0
     thr = max(0.12, float(np.nanpercentile(g[obs & ~land], 95))) if (obs & ~land).sum() > 100 else 9
-    ang = np.arctan2(gy, gx); di = np.round(np.cos(ang)).astype(int); dj = -np.round(np.sin(ang)).astype(int)
+    ang = np.nan_to_num(np.arctan2(gy, gx)); g = np.nan_to_num(g); di = np.round(np.cos(ang)).astype(int); dj = -np.round(np.sin(ang)).astype(int)
     J, I = np.mgrid[0:ny, 0:nx]
     a = g[np.clip(J + dj, 0, ny - 1), np.clip(I + di, 0, nx - 1)]; b = g[np.clip(J - dj, 0, ny - 1), np.clip(I - di, 0, nx - 1)]
     ridge = (g >= thr) & (g >= a) & (g >= b)
@@ -1446,7 +1446,9 @@ def verify():
     # ---- 1. record today's forecasts (once per satellite day and target day)
     K = len(days); xm = (K - 1) / 2; x = np.arange(K) - xm
     ok = np.all(np.isfinite(mur), axis=0)
-    slope = np.where(ok, np.tensordot(x, np.nan_to_num(mur) - np.nanmean(mur, axis=0), axes=1) / (x ** 2).sum(), np.nan)
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore"); mean_all = np.nanmean(mur, axis=0)
+    slope = np.where(ok, np.tensordot(x, np.nan_to_num(mur - mean_all), axes=1) / (x ** 2).sum(), np.nan)
     if F and F.get("frames"):
         fdays = F["times"]; ref = F.get("ref") or days[-1]
         I, J = at(F["lats"], F["lons"])

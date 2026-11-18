@@ -1209,7 +1209,7 @@ async function loadMap(){
     if(cp&&chlAge>7){src.push({stale:1,name:"Chlorophyll",detail:`Left out: newest image is ${OJ.chl.times[OJ.chl.times.length-1]}, ${chlAge} days old. The morning job is switching to a current source.`});cp=null;MAP.chlStale=1;}
     if(kp&&kdAge>10){src.push({stale:1,name:"Water clarity",detail:`Left out: newest image is ${OJ.kd.times[0]}, ${kdAge} days old`});kp=null;MAP.kdStale=1;}
     const sstAge=Math.round((Date.now()-Date.parse(sstDay))/864e5);
-    if(sstAge>2)src.push({stale:1,name:"SST freshness",detail:`Newest daily SST is ${sstDay} (${sstAge} days). NOAA refused the last download; hourly Himawari SST below is newer.`});
+    if(sstAge>2)src.push({stale:1,name:"SST freshness",detail:`Newest daily SST is ${sstDay} (${sstAge} days old). `+((OJ&&Date.now()-Date.parse(OJ.updated)<3*36e5)?"Checked within the last 3 hours, so this isn't a download fault: NASA hasn't published a newer day yet (it usually runs 1 to 2 days behind NZ time).":`Last successful check ${OJ?OJ.updated.slice(0,16).replace("T"," ")+" UTC":"unknown"}, so downloads may be failing.`)+" Sharp SST and hourly Himawari are newer where cloud allows."});
     const chl=cp?cp.map(f=>{for(let n=0;n<NN;n++)if(land[n])f[n]=NaN;return fillGaps(f,land,6);}):null;
     if(chl)src.push({ok:1,name:"Chlorophyll",detail:`${(OJ&&OJ.chl_label)||"NOAA VIIRS gap-filled, 9 km daily"}, to ${OJ.chl.times[OJ.chl.times.length-1]}`});else if(!MAP.chlStale)src.push({ok:0,name:"Chlorophyll",detail:"Unavailable today"});
     let kd=kp;if(kd){for(let n=0;n<NN;n++)if(land[n])kd[n]=NaN;fillGaps(kd,land,6);}
