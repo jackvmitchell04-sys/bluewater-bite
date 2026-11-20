@@ -620,7 +620,9 @@ function analyse(D){
     for(let j=0;j<NY;j++)for(let i=0;i<NX;i++){let a=-99,b=99;for(let q=Math.max(0,j-r);q<=Math.min(NY-1,j+r);q++){const n=ix(i,q);if(tx[n]>a)a=tx[n];if(tn[n]<b)b=tn[n];}const n=ix(i,j);if(a>-99&&b<99){mx[n]=a;mn[n]=b;}}
     A.tStep=new Float32Array(NN);for(let n=0;n<NN;n++)A.tStep[n]=isNaN(mx[n])?0:mx[n]-mn[n];}
   if(D.mu){A.geo=flowFromUV(D.mu,D.mv,D.eta);A.slaL=D.eta;
-    const cv=smooth(A.geo.div.map(x=>-x),2),ab=[...cv].filter(x=>!isNaN(x)).map(Math.abs).sort((a,b)=>a-b),p95=ab[Math.floor(ab.length*.95)]||1;A.convN=cv.map(x=>x/p95);A.convAbs=cv.map(x=>x/3e-6);   // absolute: 3e-6 /s convergence is a strong surface convergence for a 1/12 deg model
+    const cv=smooth(A.geo.div.map(x=>-x),2),ab=[...cv].filter(x=>!isNaN(x)).map(Math.abs).sort((a,b)=>a-b),p95=ab[Math.floor(ab.length*.95)]||1;A.convN=cv.map(x=>x/p95);
+    // full marks only for the strongest ~3% of convergence (and never below 3e-6 /s); a fixed 3e-6 maxed out 15-30% of the Bay, so it told us nothing
+    const p97=Math.max(3e-6,ab[Math.floor(ab.length*.97)]||0);A.convAbs=cv.map(x=>x/p97);
     A.speed=new Float32Array(NN);for(let n=0;n<NN;n++)A.speed[n]=Math.hypot(D.mu[n],D.mv[n])*1.944;
     A.shear=gradient(smooth(A.speed,1)).g;}   // knots per km: fast water beside slow water
   else if(D.sla){A.geo=geostrophy(D.sla[D.sla.length-1]);A.slaL=D.sla[D.sla.length-1];}
@@ -634,7 +636,7 @@ function analyse(D){
     const rim=sg=>{const m=new Uint8Array(NN);for(let n=0;n<NN;n++){if(A.eddy[n]!==sg)continue;const i=n%NX,j=(n-i)/NX;
       for(const[a,b]of[[1,0],[-1,0],[0,1],[0,-1]]){const x=i+a,y=j+b;if(x<0||y<0||x>=NX||y>=NY)continue;if(A.eddy[ix(x,y)]!==sg){m[n]=1;break;}}}return distKm(m);};
     A.warmRim=rim(1);A.coldRim=rim(-1);A.warmDist=A.warmRim;}
-  const dep=D.depth.map(v=>isNaN(v)?NaN:Math.log10(Math.max(v,1)));A.slope=gradient(dep).g;A.bg=gradient(D.depth);
+  const dep=D.depth.map(v=>isNaN(v)?NaN:Math.log10(Math.max(v,1)));A.slope=gradient(dep).g;A.landKm=distKm(A.land);A.bg=gradient(D.depth);
   return A;}
 
 /* Hotspot score: how many fish-holding features LINE UP in the same zone, not a weighted sum.
@@ -659,6 +661,8 @@ function featuresAt(A,spKey,n){const L=A.sst.length-1,f={};
     f.col=Math.exp(-A.chlDistO[n]/4)*Math.max(.4,1-age/8)*side*(.6+.4*pers);}}
   let cur=0;if(A.convAbs&&!isNaN(A.convAbs[n]))cur=Math.max(cur,Math.min(1,A.convAbs[n]));
   if(A.shear&&!isNaN(A.shear[n]))cur=Math.max(cur,Math.min(1,A.shear[n]/0.03));   // model currents are smooth: 0.03 kn per km is a sharp edge (top 1%)
+  // the 8 km ocean model can't resolve currents within a few km of land (islands are one or two cells), so its edges there are artefacts: fade them out
+  if(A.landKm&&!isNaN(A.landKm[n]))cur*=Math.max(0,Math.min(1,(A.landKm[n]-3)/7));
   if(A.convAbs||A.shear)f.cur=cur;
   if(A.geo&&!isNaN(A.geo.slope[n])){const wr=A.warmRim?Math.exp(-A.warmRim[n]/6):0,cr=A.coldRim?Math.exp(-A.coldRim[n]/6):0,hiSide=!A.slaA||isNaN(A.slaA[n])||A.slaA[n]>-0.01;
     f.edd=Math.max(Math.min(1,A.geo.slope[n]/4e-6)*(WARM_SP[spKey]&&!hiSide?.5:.8),(WARM_SP[spKey]?1:.7)*wr,.7*cr);}
