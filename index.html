@@ -675,7 +675,10 @@ function scoreField(A,spKey){
     const temp=tempSuit(sp,t);
     const depth=spKey!=="kingfish"?(z>=PELAGIC_MIN_DEPTH?1:0):z<dp[0]?.5+.5*z/dp[0]:z>dp[1]?Math.max(.4,1-(z-dp[1])/dp[1]):1;   // depth only matters for kingfish (reef fish); pelagics follow the water, not the bottom
     const clean=WARM_SP[spKey]&&A.D_kd&&!isNaN(A.D_kd[n])?.8+.2*Math.max(0,Math.min(1,(0.12-A.D_kd[n])/0.08)):1;
-    s[n]=Math.min(1,stackScore(featuresAt(A,spKey,n))*(.15+.85*temp)*depth*clean);}
+    const f=featuresAt(A,spKey,n);let base;
+    if(spKey==="kingfish")base=stackScore(f);   // kingfish live on structure, so it counts as a feature in its own right
+    else{const st=f.str||0;delete f.str;base=stackScore(f)*(.8+.2*st);}   // pelagics: the water finds the bait first; steep bottom under it then lifts the spot (up to +25%), but can't make a spot on its own
+    s[n]=Math.min(1,base*(.15+.85*temp)*depth*clean);}
   const M=LEARN_ON&&typeof learnModel==="function"?learnModel(spKey):null;
   if(M)for(let n=0;n<NN;n++)if(!isNaN(s[n]))s[n]=Math.min(1,s[n]*learnedFactor(M,A,n));
   return smooth(s);}
