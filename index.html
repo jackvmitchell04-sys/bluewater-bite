@@ -119,6 +119,10 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)
 .mkhint{font-size:12px;color:var(--muted);margin:4px 0 8px}
 .tides{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}.tport{background:#0a1d33;border:1px solid var(--line);border-radius:10px;padding:8px;font-size:12.5px}
 .tport b{display:block;font-size:13px;margin-bottom:3px}.tport .hl{display:flex;justify-content:space-between;gap:4px}.tport .H{color:var(--accent)}.tport .L{color:#9ecbff}.tnow{font-size:12px;color:var(--warm);margin-top:4px}
+.tbite{font-size:11.5px;color:var(--muted);margin-top:5px;border-top:1px solid var(--line);padding-top:4px}.tbite b{color:var(--accent);font-weight:600;display:block}
+.bwin{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:6px;background:#0a1d33}.bwin .t{font-size:16px;font-weight:700}.bwin .r{font-size:12.5px;color:var(--muted);margin-top:2px}
+.bwin.prime{border-color:var(--warm)}.bwin.prime .t{color:var(--warm)}.bwin.good .t{color:var(--accent)}
+.btag{font-size:11px;border-radius:6px;padding:1px 6px;margin-left:6px;background:rgba(127,208,255,.15);color:#9ecbff}
 .navbar{background:#0a2a4a;border:1px solid #1b7fd6;border-radius:12px;padding:9px 12px;margin:8px 0;font-size:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .navbar b{color:#7fd0ff}.navbar .big{font-size:18px;font-weight:700}.navbar button{margin-left:auto}
 .alertbox{background:#123a2f;border:1px solid var(--accent);border-radius:12px;padding:10px 12px;margin:8px 0;font-size:13px}.alertbox b{color:var(--accent)}.alertbox .al{cursor:pointer;padding:3px 0;border-top:1px solid rgba(46,230,197,.2)}
@@ -151,6 +155,7 @@ ol.plan b.stop{color:var(--accent)}ol.plan{margin:10px 0 6px;padding-left:22px;l
   <div class="moon" id="moonpanel"></div>
   <div class="moon" id="baropanel"></div>
   <div class="moon" id="tidepanel"></div>
+  <div class="moon" id="bitepanel"></div>
   <div id="tab-spots">
     <div class="days" id="days"></div>
     <div class="banner" id="banner"></div>
@@ -1117,8 +1122,47 @@ function renderTides(){const el=$("tidepanel");if(!TIDES){el.innerHTML=`<div cla
   const day0=nzMidnightUtc(moonDay),day1=day0+864e5;
   el.innerHTML=`<div class="moonhead"><div><div class="ph">Tides · ${nzDate(day0+43200e3)}</div><div class="il">High and low water, NZ time</div></div></div>
     <div class="tides">${TIDES.ports.map(p=>{const ev=p.ev.filter(e=>e.t>=day0&&e.t<day1),st=moonDay===0?tideState(p,Date.now()):null;
-      return`<div class="tport"><b>${p.name.replace("Whakatane","Whakatāne")}</b>${ev.map(e=>`<div class="hl"><span class="${e.type}">${e.type==="H"?"High":"Low"}</span><span>${nzTime(e.t)}</span></div>`).join("")||"n/a"}${st?`<div class="tnow">Now: ${st.rising?"rising":"falling"}, ${st.next.type==="H"?"high":"low"} ${nzTime(st.next.t)}</div>`:""}</div>`;}).join("")}</div>
-    <div class="next">Model tide (${TIDES.source}), usually within about 20 minutes. Use LINZ tide tables for bar crossings.</div>`;}
+      return`<div class="tport"><b>${p.name.replace("Whakatane","Whakatāne")}</b>${ev.map(e=>`<div class="hl"><span class="${e.type}">${e.type==="H"?"High":"Low"}</span><span>${nzTime(e.t)}</span></div>`).join("")||"n/a"}${st?`<div class="tnow">Now: ${st.rising?"rising":"falling"}, ${st.next.type==="H"?"high":"low"} ${nzTime(st.next.t)}</div>`:""}${(()=>{const w=tideWins(p,day0).filter(x=>x.day);return w.length?`<div class="tbite"><b>Tide bite</b>${w.map(x=>rng(x.a,x.b)).join(", ")}</div>`:"";})()}</div>`;}).join("")}</div>
+    <div class="next">Tide bite: the hour either side of each high and low (daylight only), when water starts or stops pushing over reefs, pinnacles and island points. Strongest inshore and on structure; out in deep blue water the moon and light matter more. Model tide (${TIDES.source}), usually within about 20 minutes. Use LINZ tide tables for bar crossings.</div>`;renderBites();}
+
+/* ---------- Bite times: moon + light + tide, all together and condensed ---------- */
+const hm=t=>{const s_=nzTime(t).replace(/\s/g,"").toLowerCase();return{t:s_.replace(/(am|pm)$/,""),ap:s_.slice(-2)};};
+const rng=(a,b)=>{const x=hm(a),y=hm(b);return x.ap===y.ap?`${x.t}-${y.t}${y.ap}`:`${x.t}${x.ap}-${y.t}${y.ap}`;};
+function sunTimes(day0){const ev=solunar(day0,BOP.lat,BOP.lon);return{ev,sr:(ev.find(e=>e.label==="Sunrise")||{t:day0+6*36e5}).t,ss:(ev.find(e=>e.label==="Sunset")||{t:day0+20*36e5}).t};}
+function tideWins(p,day0){if(!p||!p.ev)return[];const {sr,ss}=sunTimes(day0);
+  return p.ev.filter(e=>e.t>=day0&&e.t<day0+864e5).map(e=>({a:e.t-36e5,b:e.t+36e5,t:e.t,kind:"Tide",label:`${e.type==="H"?"High":"Low"} tide ${nzTime(e.t)}`,day:e.t+36e5>sr-36e5&&e.t-36e5<ss+36e5}));}
+let BITEPORT=0;
+function allBites(day0,port){const {ev,sr,ss}=sunTimes(day0),W=[];
+  for(const e of ev)if(e.type!=="Sun")W.push({a:e.t-e.dur*30e3,b:e.t+e.dur*30e3,t:e.t,kind:e.type,label:`${e.type} · ${e.label}`});
+  W.push({a:sr-45*6e4,b:sr+75*6e4,t:sr,kind:"Dawn",label:`Dawn · sunrise ${nzTime(sr)}`},{a:ss-90*6e4,b:ss+20*6e4,t:ss,kind:"Dusk",label:`Dusk · sunset ${nzTime(ss)}`});
+  if(TIDES&&TIDES.ports[port])W.push(...tideWins(TIDES.ports[port],day0));
+  return{W:W.sort((x,y)=>x.a-y.a),sr,ss};}
+// condensed: score every 5 minutes of daylight by how many windows overlap, then keep the stretches where two or more line up
+function condensedBites(day0,port,sp){const {W,sr,ss}=allBites(day0,port),wt={Major:1,Dawn:1,Dusk:.9,Minor:.6,Tide:sp==="kingfish"?1:.7};
+  const from=sr-60*6e4,to=ss+60*6e4,step=5*6e4,sl=[];
+  for(let t=from;t<to;t+=step){const on=W.filter(w=>w.a<=t+step/2&&w.b>t+step/2);sl.push({t,s:on.reduce((a,w)=>a+wt[w.kind],0),on});}
+  // stretches where at least one strong period is on, with the parts where two or more overlap marked prime
+  const out=[];let cur=null;
+  for(const x of sl){if(x.s>=.9){if(!cur){cur={a:x.t,b:x.t+step,on:new Set(),pr:[]};out.push(cur);}cur.b=x.t+step;x.on.forEach(w=>cur.on.add(w));
+      if(x.s>=1.5){const q=cur.pr[cur.pr.length-1];if(q&&q.b===x.t)q.b=x.t+step;else cur.pr.push({a:x.t,b:x.t+step});}}else cur=null;}
+  const why=on=>[...on].sort((x,y)=>wt[y.kind]-wt[x.kind]).map(z=>z.kind==="Tide"?z.label.replace(" tide"," tide at").toLowerCase():z.kind==="Major"||z.kind==="Minor"?`moon ${z.kind.toLowerCase()} (${z.label.split(" · ")[1].toLowerCase()})`:z.kind==="Dawn"?"dawn":"dusk");
+  return out.map(w=>{const on=[...w.on],a=Math.max(w.a,Math.min(...on.map(z=>z.a))),b=Math.min(w.b,Math.max(...on.map(z=>z.b)));
+      // clip prime parts to where the overlapping periods really overlap
+      const pr=w.pr.map(q=>{const ov=on.filter(z=>z.a<q.b&&z.b>q.a);let qa=q.a,qb=q.b;const st=ov.map(z=>z.a).sort((x,y)=>x-y),en=ov.map(z=>z.b).sort((x,y)=>x-y);if(st.length>1){qa=Math.max(qa,st[1]);qb=Math.min(qb,en[en.length-2]);}return{a:qa,b:qb};}).filter(q=>q.b-q.a>=20*6e4);
+      return{a,b,pr,lvl:pr.length?"prime":"good",why:why(on)};}).filter(w=>w.b-w.a>=30*6e4);}
+function renderBites(){const el=$("bitepanel");if(!el)return;const day0=nzMidnightUtc(moonDay),sp=state.sp;
+  const ports=TIDES?TIDES.ports:[],port=Math.min(BITEPORT,Math.max(0,ports.length-1));
+  const {W,sr,ss}=allBites(day0,port),C=condensedBites(day0,port,sp);
+  const col={Major:"var(--accent)",Minor:"var(--warm)",Dawn:"#ffd27f",Dusk:"#ffd27f",Tide:"#9ecbff"};
+  el.innerHTML=`<div class="moonhead"><div><div class="ph">Bite times · ${nzDate(day0+43200e3)}</div><div class="il">Moon, light and tide together, NZ time</div></div>
+    ${ports.length?`<div class="mtog">${ports.map((p,k)=>`<button data-p="${k}" class="${k===port?"on":""}">${p.name.replace("Whakatane","Whakatāne")}</button>`).join("")}</div>`:""}</div>
+    <h3 style="margin:8px 0 2px">Best windows</h3>
+    ${C.length?C.map(w=>`<div class="bwin ${w.lvl}"><div class="t">${rng(w.a,w.b)}${w.pr.map(q=>`<span class="prime">Prime ${rng(q.a,q.b)}</span>`).join("")}</div><div class="r">${w.why.join(" + ")}</div></div>`).join(""):`<div class="bwin"><div class="r">No two bite periods line up in daylight today. Fish dawn and dusk, and the moon periods below.</div></div>`}
+    <div class="exp" style="margin-top:6px">Prime is where two or more periods overlap (e.g. dawn on a tide change). ${sp==="kingfish"?"Tide changes count fully for kingfish.":"For pelagics a tide change counts for a bit less than the moon or light, and matters most near islands and reefs."}</div>
+    <h3 style="margin:10px 0 2px">All bite times</h3>
+    ${W.map(w=>{const night=w.b<sr-36e5||w.a>ss+36e5;return`<div class="bw" style="${night?"opacity:.5":""}"><span><span class="k" style="color:${col[w.kind]}">${w.kind}</span> · ${w.label.split(" · ").pop()}${night?'<span class="btag">night</span>':""}</span><span>${rng(w.a,w.b)}</span></div>`;}).join("")}
+    <div class="next">Moon periods for the Bay of Plenty${ports.length?`; tides for ${ports[port].name.replace("Whakatane","Whakatāne")}`:"; tides load when you're online"}.</div>`;
+  el.querySelectorAll(".mtog button").forEach(b=>b.onclick=()=>{BITEPORT=+b.dataset.p;renderBites();});}
 
 /* ---------- morning alerts ---------- */
 function renderAlerts(a){const el=$("alertbox");if(!a||!a.items||!a.items.length){el.hidden=true;return;}el.hidden=false;
@@ -1344,7 +1388,7 @@ $("gpxbtn").onclick=()=>{const b=new Blob([gpx()],{type:"application/gpx+xml"}),
 $("copybtn").onclick=async()=>{const t=MAP.wps.map(w=>`${w.id} (${w.area}) ${fmtLL(w.lat,w.lon)} | ${w.tag} | ${w.sst.toFixed(1)}C ${Math.round(w.depth)}m | troll ${w.len.toFixed(1)}nm zig-zag heading ${Math.round(w.head)}T from ${fmtLL(w.course[0][0],w.course[0][1])}`).join("\n");
   try{await navigator.clipboard.writeText(t);$("copybtn").textContent="Copied";}catch(e){$("probe").textContent=t;}setTimeout(()=>$("copybtn").textContent="Copy waypoints",1500);};
 window.addEventListener("resize",()=>{if(MAP.ready&&!$("tab-map").hidden)draw();});
-$("species").addEventListener("change",()=>{mapUpdate();learnPanel();});
+$("species").addEventListener("change",()=>{mapUpdate();learnPanel();renderBites();});
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===t));
   $("tab-spots").hidden=t.dataset.t!=="spots";$("tab-map").hidden=t.dataset.t!=="map";if(t.dataset.t==="map"){if(MAP.ready)draw();else loadMap();}});
 
@@ -1373,8 +1417,6 @@ function renderMoon(){
   const rows=ev.filter(e=>e.type!=="Sun").map(e=>{const a=e.t-e.dur*30e3,b=e.t+e.dur*30e3,prime=suns.some(s=>s>a-36e5&&s<b+36e5);
     return`<div class="bw"><span><span class="k" style="color:${e.type==="Major"?"var(--accent)":"var(--warm)"}">${e.type}</span> · ${e.label}${prime?'<span class="prime">Prime: overlaps sunrise/sunset</span>':""}</span><span>${nzTime(a)} to ${nzTime(b)}</span></div>`;}).join("");
   const sr=ev.find(e=>e.label==="Sunrise"),ss=ev.find(e=>e.label==="Sunset");
-  const hm=t=>{const s_=nzTime(t).replace(/\s/g,"").toLowerCase();return{t:s_.replace(/(am|pm)$/,""),ap:s_.slice(-2)};};
-  const rng=(a,b)=>{const x=hm(a),y=hm(b);return x.ap===y.ap?`${x.t}-${y.t}${y.ap}`:`${x.t}${x.ap}-${y.t}${y.ap}`;};
   const dayFrom=sr?sr.t-36e5:day0,dayTo=ss?ss.t+36e5:day0+864e5;
   const bite=window.__b=ev.filter(e=>e.type!=="Sun"&&e.t+e.dur*30e3>dayFrom&&e.t-e.dur*30e3<dayTo).map(e=>rng(e.t-e.dur*30e3,e.t+e.dur*30e3));
   const nn=nextPhase(0),nf=nextPhase(.5);
@@ -1383,7 +1425,7 @@ function renderMoon(){
     <p>${msg}</p>
     <p class="exp"><b style="color:var(--accent)">Major periods</b> (about 2 hours) are when the moon is directly overhead or underfoot, its strongest pull. <b style="color:var(--warm)">Minor periods</b> (about 1 hour) are moonrise and moonset. Either one lining up with sunrise or sunset is the best window of the day.</p>
     ${rows||'<div class="bw">No solunar periods this day</div>'}
-    <div class="bite"><span>Bite times</span><b>${bite.length?(bite.length>1?bite.slice(0,-1).join(", ")+" and "+bite[bite.length-1]:bite[0]):"None in daylight"}</b></div>
+    <div class="bite"><span>Moon bite times</span><b>${bite.length?(bite.length>1?bite.slice(0,-1).join(", ")+" and "+bite[bite.length-1]:bite[0]):"None in daylight"}</b></div>
     <div class="next">Sunrise ${sr?nzTime(sr.t):"n/a"} · Sunset ${ss?nzTime(ss.t):"n/a"} · Next new moon ${nn?nzDate(nn):"n/a"} · Next full moon ${nf?nzDate(nf):"n/a"} · Times for the Bay of Plenty (NZ time)</div>`;
   $("moonpanel").querySelectorAll(".mtog button").forEach(b=>b.onclick=()=>{moonDay=+b.dataset.d;renderMoon();});renderTides();renderBaro();if(moonDay===0)window.BITE_TODAY=window.__b;}
 
@@ -1599,7 +1641,8 @@ function dayWindow(offset=0,last=true){const now=Date.now(),hNZ=+new Date(now).t
   const sr=(ev.find(e=>e.label==="Sunrise")||{t:day0+6*36e5}).t,ss=(ev.find(e=>e.label==="Sunset")||{t:day0+20*36e5}).t;
   const leave=offset>0||PSET.leave==="dawn"?sr-50*6e4:PSET.leave==="now"?Math.max(now+20*6e4,day0+4*36e5):day0+(+PSET.leave)*36e5;
   const back=!last?ss-10*6e4:PSET.back==="sunset"?ss+20*6e4:day0+(+PSET.back)*36e5;
-  const bites=ev.filter(e=>e.type!=="Sun").map(e=>({a:e.t-e.dur*30e3,b:e.t+e.dur*30e3,type:e.type})).concat([{a:sr-45*6e4,b:sr+75*6e4,type:"Dawn"},{a:ss-90*6e4,b:ss+20*6e4,type:"Dusk"}]);
+  const bites=ev.filter(e=>e.type!=="Sun").map(e=>({a:e.t-e.dur*30e3,b:e.t+e.dur*30e3,type:e.type})).concat([{a:sr-45*6e4,b:sr+75*6e4,type:"Dawn"},{a:ss-90*6e4,b:ss+20*6e4,type:"Dusk"}])
+    .concat(TIDES?tideWins(TIDES.ports[BITEPORT]||TIDES.ports[0],day0).map(w=>({a:w.a,b:w.b,type:"Tide"})):[]);
   return{day0,tomorrow,sr,ss,leave,back,bites};}
 function biteBonus(W,a,b){let f=1,tag=null;for(const x of W.bites){const ov=Math.min(b,x.b)-Math.max(a,x.a);if(ov>15*6e4){const k=x.type==="Major"?1.3:x.type==="Dawn"?1.3:x.type==="Dusk"?1.2:1.12;if(k>f){f=k;tag=x.type;}}}return{f,tag};}
 function planCandidates(P,D,T,all){const out=[],seen=[];const sMax=MAP.scoreMax||1;
