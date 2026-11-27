@@ -283,7 +283,7 @@ def mur_nasa(days=6, stride=2, pad=0.05):
         for _ in range(5):
             if r.status_code not in (301, 302, 303, 307, 308):
                 break
-            loc = r.headers["Location"]
+            loc = requests.compat.urljoin(r.url, r.headers["Location"])     # NASA sends relative redirects
             r = s.get(loc, timeout=150, allow_redirects=False, auth=s.auth if "urs.earthdata.nasa.gov" in loc else None)
         r.raise_for_status(); return r.content
 
