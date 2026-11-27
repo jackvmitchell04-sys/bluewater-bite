@@ -30,6 +30,8 @@ def _get_deadline(url, params=None, timeout=60, **kw):
     host = url.split("/")[2]
     if _DEAD.get(host, 0) >= 2 and "open-meteo" not in host:
         raise _rq.ConnectionError(f"{host} skipped: not answering this run")
+    if time.time() - _SRV.get("_blocked", {}).get(host, 0) < 86400:
+        raise _rq.ConnectionError(f"{host} skipped: it blacklisted us in the last 24 h")
     t0 = time.monotonic()
     try:
         # read timeout can be long: Open-Meteo multi-point requests take a while to compute before the first byte
@@ -47,6 +49,10 @@ def _get_deadline(url, params=None, timeout=60, **kw):
             r.close()
             raise _rq.Timeout(f"{url.split('/')[2]} took over {limit}s")
     r._content = b"".join(buf); r._content_consumed = True
+    if r.status_code == 403 and b"blacklist" in r._content:
+        # ERDDAP blacklist: leave this server alone for a day; hammering it keeps us on the list
+        _SRV.setdefault("_blocked", {})[host] = time.time(); _srv_save()
+        log("  ", host, "says we're blacklisted: not asking it again for 24 h")
     return r
 
 
@@ -201,6 +207,10 @@ def _server_note(ds, host, ok):
         rec["good"] = host; rec.setdefault("miss", {}).pop(host, None)
     else:
         rec.setdefault("miss", {})[host] = time.time()
+    _srv_save()
+
+
+def _srv_save():
     try:
         with open(_SRV_PATH, "w") as f:
             json.dump(_SRV, f, separators=(",", ":"))
@@ -215,8 +225,11 @@ def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
     last = None
     r = None
     order = _server_order(ds)
+    lat_orders = [f"[({la0:.3f}):{stride}:({la1:.3f})]", f"[({la1:.3f}):{stride}:({la0:.3f})]"]
+    if _SRV.get(ds, {}).get("latdesc"):
+        lat_orders.reverse()
     for erd in order:
-        for latc in (f"[({la0:.3f}):{stride}:({la1:.3f})]", f"[({la1:.3f}):{stride}:({la0:.3f})]"):
+        for latc in lat_orders:
             q = var + time + ("[(0.0)]" if alt else "") + latc + f"[({lo0:.3f}):{stride}:({lo1:.3f})]"
             try:
                 r = requests.get(erd + ds + ".csv?" + requests.utils.quote(q, safe=""), timeout=150)
@@ -228,10 +241,11 @@ def erddap_frames(ds, var, time="", alt=False, stride=1, pad=0.0):
                     break          # server refusing us: try the next mirror
         if r is None and last is not None and "404" in str(last) and any(k in (getattr(getattr(last, "response", None), "text", "") or "") for k in ("unknown datasetID", "Resource not found")):
             _server_note(ds, erd.split("/")[2], False)          # this server doesn't hold the dataset (not just 'no data for that day')
-        if r is None and erd == order[-2]:
+        if r is None and erd == order[-2] and __import__("time").time() - _SRV.get("_blocked", {}).get(order[-1].split("/")[2], 0) >= 86400:
             __import__("time").sleep(60)
         if r is not None:
             _server_note(ds, erd.split("/")[2], True)
+            _SRV[ds]["latdesc"] = latc.startswith(f"[({la1:.3f})"); _srv_save()
             if erd != order[0]:
                 log("  (from mirror", erd.split("/")[2] + ")")
             break
@@ -503,34 +517,45 @@ def ocean():
     out["updated"] = dt.datetime.utcnow().isoformat(timespec="minutes") + "Z"
     sst = None
     prev_mur = out.get("sst") if str(out.get("sst_label", "")).startswith("NASA JPL MUR") else None
-    for ds, stride, label in [("jplMURSST41", 2, "NASA JPL MUR, 1 km daily"), ("jplMURSST41", 2, "NASA JPL MUR, 1 km daily"),
-                              ("noaacwBLENDEDsstDNDaily", 1, "NOAA Geo-Polar Blended, 5 km daily (MUR server unavailable)")]:
-        if ds.startswith("noaacw") and prev_mur and (dt.date.today() - dt.date.fromisoformat(prev_mur["times"][-1])).days <= 3:
-            # a 1-2 day old 1 km MUR beats a fresh 5 km blend for finding breaks
-            log("ocean: MUR refused; keeping the previous MUR download", prev_mur["times"][-1], "instead of the 5 km blend"); break
+    have = prev_mur["times"][-1] if prev_mur else "2000-01-01"
+    yesterday = (dt.datetime.utcnow().date() - dt.timedelta(days=1)).isoformat()
+    if have >= yesterday:
+        # MUR for a day appears about a day and a half later, so nothing newer can exist yet: don't ask anyone
+        log("ocean: MUR already has", have, "- nothing newer can exist yet, not asking")
+    else:
+        # NOAA ERDDAP first (one attempt, no patient retries; a server that blacklisted us is skipped for 24 h)
         try:
-            lats, lons, times, sst = erddap_frames(ds, "analysed_sst", "[last-5:1:last]", stride=stride, pad=0.05)
-            if np.nanmean(sst) > 200:
-                sst = sst - 273.15
-            out["sst_label"] = label; out["sst"] = pack(lats, lons, times, sst); OCEAN["sst"] = (lats, lons, times, sst)
-            log("ocean:", label, times[0], "to", times[-1]); break
-        except Exception as e:
-            log("ocean: SST", ds, "failed:", str(e)[:100]); sst = None
-            if ds == "jplMURSST41" and "403" in str(e):
-                __import__("time").sleep(90)       # the main NOAA server rate-limits; one patient retry
-    have = OCEAN["sst"][2][-1] if sst is not None and str(out.get("sst_label", "")).startswith("NASA JPL MUR") else (prev_mur or {}).get("times", ["2000-01-01"])[-1]
-    if os.environ.get("EARTHDATA_USER") and have < (dt.date.today() - dt.timedelta(days=1)).isoformat():
-        # NOAA's MUR copy is missing or behind: fetch the Bay box straight from NASA PO.DAAC (needs an Earthdata login)
-        try:
-            r = mur_nasa(days=6)
-            if r and r[2][-1] > have:
-                lats, lons, times, sst = r
-                out["sst_label"] = "NASA JPL MUR, 1 km daily"; out["sst"] = pack(lats, lons, times, sst); OCEAN["sst"] = r
-                log("ocean: MUR from NASA PO.DAAC", times[0], "to", times[-1])
+            lats, lons, times, a_ = erddap_frames("jplMURSST41", "analysed_sst", "[last-5:1:last]", stride=2, pad=0.05)
+            if np.nanmean(a_) > 200:
+                a_ = a_ - 273.15
+            if times[-1] > have:
+                sst = a_; out["sst_label"] = "NASA JPL MUR, 1 km daily"; out["sst"] = pack(lats, lons, times, sst); OCEAN["sst"] = (lats, lons, times, sst)
+                log("ocean: MUR from NOAA ERDDAP", times[0], "to", times[-1])
             else:
-                log("ocean: NASA MUR has nothing newer than", have)
+                log("ocean: NOAA ERDDAP MUR has nothing newer than", have)
         except Exception as e:
-            log("ocean: NASA MUR failed:", str(e)[:120])
+            log("ocean: MUR from NOAA ERDDAP failed:", str(e)[:100])
+        if sst is None and os.environ.get("EARTHDATA_USER"):
+            # same MUR files straight from NASA PO.DAAC, for when NOAA's copy is blocked or behind
+            try:
+                r = mur_nasa(days=6)
+                if r and r[2][-1] > have:
+                    sst = r[3]; out["sst_label"] = "NASA JPL MUR, 1 km daily"; out["sst"] = pack(*r); OCEAN["sst"] = r
+                    log("ocean: MUR from NASA PO.DAAC", r[2][0], "to", r[2][-1])
+                else:
+                    log("ocean: NASA MUR has nothing newer than", have)
+            except Exception as e:
+                log("ocean: NASA MUR failed:", str(e)[:120])
+        if sst is None and (not prev_mur or (dt.date.today() - dt.date.fromisoformat(have)).days > 3):
+            # a 1-3 day old 1 km MUR beats a fresh 5 km blend for finding breaks; past that, use the blend
+            try:
+                lats, lons, times, a_ = erddap_frames("noaacwBLENDEDsstDNDaily", "analysed_sst", "[last-5:1:last]", pad=0.05)
+                if np.nanmean(a_) > 200:
+                    a_ = a_ - 273.15
+                sst = a_; out["sst_label"] = "NOAA Geo-Polar Blended, 5 km daily (MUR unavailable)"; out["sst"] = pack(lats, lons, times, sst)
+                OCEAN["sst"] = (lats, lons, times, sst); log("ocean: MUR too old, using the 5 km blend", times[0], "to", times[-1])
+            except Exception as e:
+                log("ocean: SST blend failed:", str(e)[:100])
     if sst is None and out.get("sst"):
         o = out["sst"]; arr = np.array([[[np.nan if v is None else v for v in r] for r in f] for f in o["frames"]], float)
         OCEAN["sst"] = (o["lats"], o["lons"], o["times"], arr); log("ocean: SST kept from previous run", o["times"][-1])
