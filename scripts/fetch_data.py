@@ -262,6 +262,49 @@ def pack(lats, lons, times, arr, digits=2):
 OCEAN = {}   # arrays kept for the jobs that run after ocean()
 
 
+def mur_nasa(days=6, stride=2, pad=0.05):
+    """MUR 1 km from NASA PO.DAAC cloud OPeNDAP, cut to the Bay box server side (a few hundred kB per day).
+    Used when the NOAA ERDDAP copies are blocked or behind. Login comes from EARTHDATA_USER / EARTHDATA_PASS
+    (free account at urs.earthdata.nasa.gov). Same return shape as erddap_frames."""
+    import requests, netCDF4
+    coll = "C1996881146-POCLOUD"      # MUR-JPL-L4-GLOB-v4.1
+    g = requests.get("https://cmr.earthdata.nasa.gov/search/granules.json",
+                     params={"collection_concept_id": coll, "sort_key": "-start_date", "page_size": days}, timeout=60)
+    g.raise_for_status()
+    ids = sorted(e["title"] for e in g.json()["feed"]["entry"])
+    # MUR grid: lat -89.99..89.99, lon -179.99..180.00, both 0.01 deg, south to north / west to east
+    i0 = int(round((BOX["lat0"] - pad + 89.99) / 0.01)); i1 = int(round((BOX["lat1"] + pad + 89.99) / 0.01))
+    j0 = int(round((BOX["lon0"] - pad + 179.99) / 0.01)); j1 = int(round((BOX["lon1"] + pad + 179.99) / 0.01))
+    s = requests.Session(); s.auth = (os.environ["EARTHDATA_USER"], os.environ.get("EARTHDATA_PASS", ""))
+
+    def get(url):
+        # Earthdata sends us to urs.earthdata.nasa.gov to log in; requests drops auth on cross-host redirects, so follow by hand
+        r = s.get(url, timeout=150, allow_redirects=False)
+        for _ in range(5):
+            if r.status_code not in (301, 302, 303, 307, 308):
+                break
+            loc = r.headers["Location"]
+            r = s.get(loc, timeout=150, allow_redirects=False, auth=s.auth if "urs.earthdata.nasa.gov" in loc else None)
+        r.raise_for_status(); return r.content
+
+    lats = lons = None; times = []; grids = []
+    for gid in ids:
+        ce = f"/lat[{i0}:{stride}:{i1}];/lon[{j0}:{stride}:{j1}];/analysed_sst[0][{i0}:{stride}:{i1}][{j0}:{stride}:{j1}]"
+        url = f"https://opendap.earthdata.nasa.gov/collections/{coll}/granules/{gid}.dap.nc4?dap4.ce=" + requests.utils.quote(ce, safe="/")
+        try:
+            nc = netCDF4.Dataset("mur.nc", memory=get(url))
+        except Exception as e:
+            log("   NASA MUR", gid[:8], str(e)[:80]); continue
+        la = np.array(nc["lat"][:], float); lo = np.array(nc["lon"][:], float)
+        a = np.ma.filled(nc["analysed_sst"][:].astype(float), np.nan).reshape(len(la), len(lo)); nc.close()
+        if np.nanmean(a) > 200:
+            a = a - 273.15
+        lats, lons = la[::-1], lo; grids.append(a[::-1]); times.append(f"{gid[:4]}-{gid[4:6]}-{gid[6:8]}")
+    if not grids:
+        return None
+    return [round(float(v), 4) for v in lats], [round(float(v), 4) for v in lons], times, np.array(grids)
+
+
 # ---------------------------------------------------------------- multi-sensor ocean colour composite
 CHL_SOURCES = [   # (dataset, stride, label)  finest first: on the same day the finest sensor wins
     ("noaacwS3AOLCIchlaDaily", 1, "Sentinel-3A OLCI"),
@@ -475,6 +518,19 @@ def ocean():
             log("ocean: SST", ds, "failed:", str(e)[:100]); sst = None
             if ds == "jplMURSST41" and "403" in str(e):
                 __import__("time").sleep(90)       # the main NOAA server rate-limits; one patient retry
+    have = OCEAN["sst"][2][-1] if sst is not None and str(out.get("sst_label", "")).startswith("NASA JPL MUR") else (prev_mur or {}).get("times", ["2000-01-01"])[-1]
+    if os.environ.get("EARTHDATA_USER") and have < (dt.date.today() - dt.timedelta(days=1)).isoformat():
+        # NOAA's MUR copy is missing or behind: fetch the Bay box straight from NASA PO.DAAC (needs an Earthdata login)
+        try:
+            r = mur_nasa(days=6)
+            if r and r[2][-1] > have:
+                lats, lons, times, sst = r
+                out["sst_label"] = "NASA JPL MUR, 1 km daily"; out["sst"] = pack(lats, lons, times, sst); OCEAN["sst"] = r
+                log("ocean: MUR from NASA PO.DAAC", times[0], "to", times[-1])
+            else:
+                log("ocean: NASA MUR has nothing newer than", have)
+        except Exception as e:
+            log("ocean: NASA MUR failed:", str(e)[:120])
     if sst is None and out.get("sst"):
         o = out["sst"]; arr = np.array([[[np.nan if v is None else v for v in r] for r in f] for f in o["frames"]], float)
         OCEAN["sst"] = (o["lats"], o["lons"], o["times"], arr); log("ocean: SST kept from previous run", o["times"][-1])

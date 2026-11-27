@@ -34,6 +34,9 @@ jobs:
           python-version: "3.12"
       - run: pip install xarray netCDF4 siphon numpy requests pillow tifffile imagecodecs
       - run: timeout 45m python scripts/fetch_data.py ${{ inputs.jobs }} || echo "fetch ended early, saving what finished"
+        env:
+          EARTHDATA_USER: ${{ secrets.EARTHDATA_USER }}
+          EARTHDATA_PASS: ${{ secrets.EARTHDATA_PASS }}
       - name: Save new data
         if: always()
         run: |

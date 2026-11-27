@@ -28,6 +28,9 @@ jobs:
           python-version: "3.12"
       - run: pip install xarray netCDF4 siphon numpy requests pillow tifffile imagecodecs
       - run: timeout 20m python scripts/fetch_data.py himawari ocean alerts sharp truecolour openmeteo_catchup verify || echo "ended early"
+        env:
+          EARTHDATA_USER: ${{ secrets.EARTHDATA_USER }}
+          EARTHDATA_PASS: ${{ secrets.EARTHDATA_PASS }}
       - name: Save
         if: always()
         run: |
